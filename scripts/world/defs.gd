@@ -135,6 +135,7 @@ const ZONES := {
 	3: {"name": "Workshop", "color": Color(0.45, 0.70, 1.0), "cats": ["Storage & Industry", "Knowledge & Civic"],
 		"desc": "Work at industry and knowledge buildings is 20% faster; their bonuses are 25% stronger."},
 }
+const BRIDGE_WOOD := 3           # wood per bridge tile
 const ROAD_SPEED_COST := 0.5      # path cost on a road (plains are 1.0): about twice as fast
 
 
@@ -190,6 +191,8 @@ const BUILD_ORDER := ["campfire", "shelter", "storage", "research_table", "beddi
 # tech: research needed to unlock. warm: sleeping/standing inside keeps people warm. storage / water_cap / preserve:
 # stockpile bonuses. blocks: stops animals. guard: wild animals keep away (tiles).
 const BUILDINGS := {
+	"bandit_camp": {"name": "Bandit Camp", "size": Vector2i(3, 3), "cost": {}, "work": 1.0, "housing": 0,
+		"desc": "A ragged camp of thieves and robbers. Destroy it to recover their stash."},
 	"campfire": {"name": "Campfire", "size": Vector2i(1, 1), "cost": {"wood": 4, "stone": 4}, "work": 12.0, "housing": 0,
 		"desc": "Light, warmth and cooking. Needs firewood to keep burning."},
 	"shelter": {"name": "Primitive Shelter", "size": Vector2i(2, 2), "cost": {"wood": 10, "sticks": 12, "grass": 10}, "work": 30.0, "housing": 3, "warm": true,
@@ -300,25 +303,25 @@ static func best_weapon_for(kind: String, era: int) -> String:
 
 # ---------------------------------------------------------------- governments (chosen on entering the Bronze and Iron Ages)
 const GOVERNMENTS := {
-	"chiefdom": {"name": "Chiefdom", "era": 2, "fx": {"fight": 4.0, "work_hunter": 0.15, "fertility": 0.1}, "ai": "warlike",
+	"chiefdom": {"approval": 0, "name": "Chiefdom", "era": 2, "fx": {"fight": 4.0, "work_hunter": 0.15, "fertility": 0.1}, "ai": "warlike",
 		"desc": "A war chief and his kin rule. Stronger warriors and hunters, more children."},
-	"monarchy": {"name": "Monarchy", "era": 2, "fx": {"work_all": 0.08, "defense": 0.05}, "ai": "balanced",
+	"monarchy": {"approval": -2, "name": "Monarchy", "era": 2, "fx": {"work_all": 0.08, "defense": 0.05}, "ai": "balanced",
 		"desc": "A hereditary king or queen. Steady work and better-protected people."},
-	"theocracy": {"name": "Theocracy", "era": 2, "fx": {"medicine": 0.2, "heal": 0.2, "research": 0.15}, "ai": "peaceful",
+	"theocracy": {"approval": 3, "name": "Theocracy", "era": 2, "fx": {"medicine": 0.2, "heal": 0.2, "research": 0.15}, "ai": "peaceful",
 		"desc": "Priest-kings speak for the gods. Better healing, temples keep records (research)."},
-	"oligarchy": {"name": "Council of Elders", "era": 2, "fx": {"research": 0.25, "trade": 0.2}, "ai": "peaceful",
+	"oligarchy": {"approval": 2, "name": "Council of Elders", "era": 2, "fx": {"research": 0.25, "trade": 0.2}, "ai": "peaceful",
 		"desc": "The wisest elders decide together. Faster research and shrewder trade."},
-	"city_state": {"name": "City-State", "era": 2, "fx": {"storage": 100.0, "work_builder": 0.2, "trade": 0.1}, "ai": "balanced",
+	"city_state": {"approval": 3, "name": "City-State", "era": 2, "fx": {"storage": 100.0, "work_builder": 0.2, "trade": 0.1}, "ai": "balanced",
 		"desc": "A walled city rules its fields. Faster building, bigger stores, some trade."},
-	"kingdom": {"name": "Kingdom", "era": 3, "fx": {"work_all": 0.1, "defense": 0.1}, "ai": "balanced",
+	"kingdom": {"approval": -2, "name": "Kingdom", "era": 3, "fx": {"work_all": 0.1, "defense": 0.1}, "ai": "balanced",
 		"desc": "Lords swear to one crown. More work done, sturdier defence."},
-	"empire": {"name": "Empire", "era": 3, "fx": {"fight": 10.0, "train": 0.5, "work_builder": 0.15}, "ai": "warlike",
+	"empire": {"approval": -6, "name": "Empire", "era": 3, "fx": {"fight": 10.0, "train": 0.5, "work_builder": 0.15}, "ai": "warlike",
 		"desc": "An emperor and standing armies. Much stronger soldiers who train faster."},
-	"republic": {"name": "Republic", "era": 3, "fx": {"research": 0.3, "trade": 0.25}, "ai": "peaceful",
+	"republic": {"approval": 6, "name": "Republic", "era": 3, "fx": {"research": 0.3, "trade": 0.25}, "ai": "peaceful",
 		"desc": "Elected magistrates and a senate. Great for research and trade."},
-	"democracy": {"name": "Democracy", "era": 3, "fx": {"work_all": 0.12, "research": 0.15, "fertility": 0.15}, "ai": "peaceful",
+	"democracy": {"approval": 10, "name": "Democracy", "era": 3, "fx": {"work_all": 0.12, "research": 0.15, "fertility": 0.15}, "ai": "peaceful",
 		"desc": "Citizens vote in the assembly. Everyone works harder, families grow."},
-	"tyranny": {"name": "Tyranny", "era": 3, "fx": {"fight": 6.0, "work_all": 0.15, "fertility": -0.15}, "ai": "warlike",
+	"tyranny": {"approval": -15, "name": "Tyranny", "era": 3, "fx": {"fight": 6.0, "work_all": 0.15, "fertility": -0.15}, "ai": "warlike",
 		"desc": "One strongman rules by fear. Hard work and fierce fighters, but fewer children."},
 }
 
@@ -340,7 +343,7 @@ const TECH_ORDER := [
 	"stone_choppers", "bone_needles", "digging_sticks", "agriculture", "pottery", "fishing_nets",
 	"animal_traps", "stone_huts", "wells", "mining", "woven_baskets", "herbalism",
 	"midwifery", "bone_setting", "flint_spears", "slings", "hide_shields", "polished_tools",
-	"flint_knapping", "mortar_pestle", "boatbuilding", "paddles", "irrigation", "seed_selection",
+	"flint_knapping", "mortar_pestle", "pack_carts", "boatbuilding", "paddles", "irrigation", "seed_selection",
 	"salt_curing", "timber_houses", "mudbrick", "organized_labor", "bronze_surgery", "bathing",
 	"healing_salves", "bronze_weapons", "bronze_shields", "composite_bows", "bronze_working", "bronze_axes",
 	"woven_clothing", "sailing", "navigation", "larger_hulls", "iron_plough", "crop_rotation",
@@ -382,6 +385,7 @@ const TECHS := {
 	"hide_shields": {"name": "Hide Shields", "era": 1, "kind": "Weapons", "cost": {"points": 140, "hides": 4}, "fx": {"defense": 0.1, "fight": 3.0}, "desc": "Stretched hide on a frame: 10% less damage taken."},
 	"polished_tools": {"name": "Polished Stone Tools", "era": 1, "kind": "Tools", "cost": {"points": 160, "stone": 10}, "fx": {"work_all": 0.15}, "desc": "Ground and polished axes, adzes and scrapers: all work 15% faster."},
 	"flint_knapping": {"name": "Flint Knapping", "era": 1, "kind": "Tools", "cost": {"points": 140}, "fx": {"work_woodcutter": 0.2, "work_miner": 0.2}, "desc": "Razor-sharp flakes for every job."},
+	"pack_carts": {"name": "Trade Wagons", "era": 1, "kind": "Tools", "cost": {"points": 150, "wood": 15, "hides": 2}, "fx": {}, "desc": "Traders pull a wagon: they carry four times as many goods and Talents on each trip."},
 	"mortar_pestle": {"name": "Mortar & Pestle", "era": 1, "kind": "Tools", "cost": {"points": 120, "stone": 6}, "fx": {"work_cook": 0.3}, "desc": "Grinding grain and herbs: cooks work faster."},
 	"boatbuilding": {"name": "Boatbuilding", "era": 1, "kind": "Ships", "cost": {"points": 160, "wood": 10}, "fx": {}, "unlocks": ["harbor"], "desc": "Unlocks the Harbor, where you can build dugout canoes."},
 	"paddles": {"name": "Carved Paddles", "era": 1, "kind": "Ships", "cost": {"points": 120}, "fx": {"ship_speed": 0.25}, "desc": "Ships move 25% faster."},

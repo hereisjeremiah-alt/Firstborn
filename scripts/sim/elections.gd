@@ -41,6 +41,11 @@ static func update(sim: Sim, c: Colony) -> void:
 	if c.leader_id >= 0 and cur == null:
 		var old := sim.person(c.leader_id)
 		why = "after the death of %s %s" % [c.leader_title, old.name] if old != null else "after losing their leader"
+		if old != null and not old.alive:
+			if c.civ_id == 0:
+				sim.emit_signal("event", "%s %s has died. The tribe mourns and gathers to choose a new leader." % [c.leader_title, old.name], "major_bad")
+			elif sim.have_met(0, c.civ_id):
+				sim.emit_signal("event", "%s %s of the %s has died." % [c.leader_title, old.name, c.name], "major")
 	elif c.leader_title != "" and c.leader_title != title_for(c):
 		why = "for the first President"
 	elif c.leader_id < 0:
@@ -68,6 +73,8 @@ static func hold(sim: Sim, c: Colony, why := "") -> void:
 				eldest = p
 		_install(sim, c, eldest, title, now, [], "")
 		return
+	if c.civ_id == 0 and voters.size() >= 2:
+		sim.emit_signal("event", "Election day! The %s votes for a new %s." % ["tribe" if title == "Chief" else "people", title], "major")
 	var cands := _nominees(sim, c, title)
 	if cands.is_empty():
 		cands = [voters[0]]
@@ -154,9 +161,9 @@ static func _install(sim: Sim, c: Colony, winner: Human, title: String, now: flo
 		text = "%s was elected %s of %s%s%s.%s" % [winner.name, role, who, reason, count, tail]
 	text = text[0].to_upper() + text.substr(1)
 	if c.civ_id == 0:
-		sim.emit_signal("event", text, "good")
+		sim.emit_signal("event", text, "major_good")
 	elif sim.have_met(0, c.civ_id) and title == "President":
-		sim.emit_signal("event", "%s is the new President of the %s." % [winner.name, c.name], "info")
+		sim.emit_signal("event", "%s is the new President of the %s." % [winner.name, c.name], "major")
 
 
 # ---------------------------------------------------------------- the player's influence

@@ -51,6 +51,8 @@ var access := {}                # "a>b" -> calendar year until which a's Billies
 var access_denied := {}         # "a>b" -> calendar year before which a won't ask b again
 var access_asks: Array = []     # AI tribes waiting for the player's answer on passage
 var trespass_cd := {}           # "a>b" -> sim time of the next possible incident roll
+var fog := Fog.new()
+var defect_asks: Array = []     # groups from other tribes asking to join the player (Politics)
 var alliances := {}             # "a:b" -> calendar year the alliance was made
 var deal_offers: Array = []     # offers from AI tribes waiting for the player (Deals)
 var next_deal_id := 1
@@ -73,6 +75,7 @@ func new_world(seed_value: int, size: int) -> void:
 	weather.setup(seed_value)
 	colony = Colony.new()          # placeholder until the player picks a start
 	colony.home = world.spawn
+	fog.setup(world, false)        # no fog while choosing a start
 	_spawn_animals()
 	refresh_predators()
 	_last_day = time.day()
@@ -126,6 +129,9 @@ func found_tribes(player_tile: Vector2i, ai_count: int) -> void:
 					a.alive = false
 					a.meat_left = 0
 	_cleanup_animals()
+	Bandits.spawn_camps(self, homes)
+	fog.setup(world, Config.fog_of_war)
+	fog.reveal(player_tile, Fog.START_R)
 	started = true
 	var first: Human = colony.people[0]
 	var second: Human = colony.people[1]
@@ -189,6 +195,27 @@ func _found_colony(civ_id: int, home: Vector2i) -> Colony:
 		m.partner_id = f.id
 		f.partner_id = m.id
 		k += 1
+	return c
+
+
+## A new AI tribe founded mid-game (a breakaway group) at `home`, with no people yet.
+func new_tribe(home: Vector2i, race: int) -> Colony:
+	var c := Colony.new()
+	c.civ_id = colonies.size()
+	c.race = race
+	var taken := {}
+	for oc in colonies:
+		taken[oc.name] = true
+	c.name = Names.tribe(name_rng, c.race, taken)
+	c.color = Defs.TRIBE_COLORS[c.civ_id] if c.civ_id < Defs.TRIBE_COLORS.size() else Color.from_hsv(name_rng.randf(), 0.65, 0.95)
+	c.flag = FlagArt.random_flag(name_rng, c.color)
+	c.home = home
+	c.research_share = Config.rule("research_share")
+	c.auto_expand = true
+	colonies.append(c)
+	var hs := states.at(home)
+	if hs >= 0 and int(states.owners[hs]) < 0:
+		states.set_owner(hs, c.civ_id)
 	return c
 
 
@@ -382,6 +409,10 @@ func is_cold_season_tile(i: int) -> bool:
 
 # ================================================================ main step
 func step(dt: float) -> void:
+	fog.update(self, dt)
+	var want_scale := Config.rule("calendar_speed")
+	if absf(want_scale - time.scale) > 0.0001:
+		time.set_scale(want_scale)
 	time.advance(dt)
 	var hours := dt / Defs.HOUR
 	_hour_acc += hours
@@ -439,12 +470,13 @@ func _hourly() -> void:
 	var yrs := time.cal_years()
 	for c in colonies:
 		c.now_years = yrs
-		if c.collapsed:
+		if c.collapsed or c.bandit:
 			continue
 		Survival.hourly(self, c)
 		_produce(c)
 		CivAI.update(self, c)
 		Elections.update(self, c)
+	Bandits.hourly(self)
 	_check_contacts()
 	Borders.check_trespass(self)
 	Deals.expire(self)
@@ -486,6 +518,8 @@ func refresh_predators() -> void:
 
 
 func _daily() -> void:
+	for c in colonies.duplicate():
+		Politics.daily(self, c)
 	for i in _border_blocked:
 		if int(claims.get(i, 0)) == -7:
 			claims.erase(i)
@@ -495,7 +529,7 @@ func _daily() -> void:
 		_last_season = season
 		_on_new_season(season)
 	for c in colonies:
-		if c.collapsed:
+		if c.collapsed or c.bandit:
 			continue
 		Survival.daily(self, c)
 		_farms(c, season)
@@ -584,7 +618,7 @@ func land_reachable(a: Colony, b: Colony) -> bool:
 func trade_partners(c: Colony) -> Array:
 	var out: Array = []
 	for o in colonies:
-		if o == c or o.collapsed or o.population() == 0:
+		if o == c or o.collapsed or o.bandit or o.population() == 0:
 			continue
 		if have_met(c.civ_id, o.civ_id) and relation(c.civ_id, o.civ_id) <= -40.0:
 			continue
@@ -679,10 +713,10 @@ func do_trade(p: Human, seller: Colony, buyer: Colony) -> Dictionary:
 
 func _check_contacts() -> void:
 	for a in colonies:
-		if a.collapsed:
+		if a.collapsed or a.bandit:
 			continue
 		for b in colonies:
-			if b.civ_id <= a.civ_id or b.collapsed or have_met(a.civ_id, b.civ_id):
+			if b.civ_id <= a.civ_id or b.collapsed or b.bandit or have_met(a.civ_id, b.civ_id):
 				continue
 			if _tribes_touch(a, b) or _tribes_touch(b, a):
 				var k := _key(a.civ_id, b.civ_id)
@@ -705,7 +739,7 @@ func _tribes_touch(a: Colony, b: Colony) -> bool:
 
 ## Fighting sours relations between two tribes (and counts as meeting them).
 func on_tribes_clash(a: int, b: int) -> void:
-	if a == b:
+	if a == b or civ(a).bandit or civ(b).bandit:
 		return
 	var k := _key(a, b)
 	contacts[k] = true
@@ -782,6 +816,8 @@ func can_place(c: Colony, type: String, t: Vector2i) -> String:
 				return "Can't build on %s." % Defs.terrain_name(ter)
 			if building_tiles.has(i):
 				return "Something is already built here."
+			if type != "gate" and (world.road[i] != 0 or _road_planned(i)):
+				return "Roads can't be built over (only a gate can stand on a road)."
 			var r := world.res_type[i]
 			if r in Defs.TREES or r == Defs.R.BOULDER or r == Defs.R.LARGE_STONE or r == Defs.R.BERRY_BUSH \
 					or r == Defs.R.FRUIT_BUSH or r >= Defs.R.COPPER_ORE and r <= Defs.R.IRON_ORE:
@@ -797,6 +833,13 @@ func can_place(c: Colony, type: String, t: Vector2i) -> String:
 	if c != null and not c.is_unlocked(type):
 		return "Research %s first." % Defs.TECHS[str(d["tech"])]["name"]
 	return ""
+
+
+func _road_planned(i: int) -> bool:
+	for oc in colonies:
+		if oc.road_marks.has(i):
+			return true
+	return false
 
 
 func _rocky_near(t: Vector2i, s: Vector2i) -> bool:
@@ -822,6 +865,8 @@ func place_building(c: Colony, type: String, t: Vector2i) -> Building:
 	c.buildings.append(b)
 	buildings_by_id[b.id] = b
 	_register_building_tiles(b)
+	if c.civ_id == 0:
+		fog.reveal(b.center_tile(), Fog.BUILDING_R)
 	var z := Defs.zone_for(type)
 	b.zoned = z > 0 and int(c.zones.get(world.idx(b.center_tile()), 0)) == z
 	if c.cheat:
@@ -859,12 +904,16 @@ func paint_zone(c: Colony, t0: Vector2i, t1: Vector2i, zone: int) -> int:
 	return n
 
 
-## Whether a road can go on this tile (land, not a building, not a wall).
+## Whether a road can go on this tile: land (not a building) or, as a bridge, a lake or river.
 func road_ok(q: Vector2i) -> bool:
 	if not world.inb(q):
 		return false
 	var i := world.idx(q)
-	return Defs.TERRAIN[world.terrain[i]]["cost"] > 0.0 and world.terrain[i] != Defs.T.RIVER and not building_tiles.has(i) and world.road[i] == 0
+	if building_tiles.has(i) or world.road[i] != 0:
+		return false
+	if world.bridgeable(q):
+		return true
+	return Defs.TERRAIN[world.terrain[i]]["cost"] > 0.0
 
 
 ## Marks a road plan along tiles; trees and bushes in the way are marked for clearing.
@@ -885,12 +934,14 @@ func plan_road(c: Colony, tiles: Array) -> int:
 
 func lay_road(c: Colony, i: int) -> void:
 	c.road_marks.erase(i)
-	if world.road[i] == 1:
+	if world.road[i] != 0:
 		return
-	world.road[i] = 1
-	road_tiles[i] = true
 	var q := Vector2i(i % world.w, i / world.w)
+	world.road[i] = 2 if world.bridgeable(q) else 1
+	road_tiles[i] = true
 	paths.refresh_tile(q)
+	if world.road[i] == 2:
+		_reach_cache.clear()          # a bridge can join two lands
 
 
 func remove_roads(c: Colony, t0: Vector2i, t1: Vector2i) -> int:
@@ -903,10 +954,11 @@ func remove_roads(c: Colony, t0: Vector2i, t1: Vector2i) -> int:
 			var i := world.idx(q)
 			if c.road_marks.erase(i):
 				n += 1
-			if world.road[i] == 1 and states.owner_at(q) in [-1, c.civ_id]:
+			if world.road[i] != 0 and states.owner_at(q) in [-1, c.civ_id]:
 				world.road[i] = 0
 				road_tiles.erase(i)
 				paths.refresh_tile(q)
+				_reach_cache.clear()
 				n += 1
 	return n
 
@@ -983,6 +1035,7 @@ func damage_building(b: Building, dmg: float, attacker_civ: int) -> bool:
 	if b.hp < 0.0:
 		b.hp = b.max_hp()
 	b.hp -= dmg
+	last_attacker_civ = attacker_civ
 	if attacker_civ >= 0 and attacker_civ != b.civ_id:
 		on_tribes_clash(attacker_civ, b.civ_id)
 	if b.hp > 0.0:
@@ -996,8 +1049,13 @@ func damage_building(b: Building, dmg: float, attacker_civ: int) -> bool:
 
 
 ## Removes a structure without refunding anything (destroyed in war).
+var last_attacker_civ := -1
+
+
 func destroy_building(b: Building) -> void:
 	var c := civ(b.civ_id)
+	if b.type == "bandit_camp":
+		Bandits.camp_destroyed(self, b, last_attacker_civ)
 	for q in b.tiles():
 		var i := world.idx(q)
 		building_tiles.erase(i)
@@ -1050,11 +1108,11 @@ func claim_state(s: int, civ_id: int) -> void:
 	states.set_owner(s, civ_id)
 	var c := civ(civ_id)
 	if civ_id == 0:
-		emit_signal("event", ("Your people have claimed %s!" if before < 0 else "Your soldiers have captured %s from the %s!") % ([states.names[s]] if before < 0 else [states.names[s], civ(before).name]), "good")
+		emit_signal("event", ("Your people have claimed %s!" if before < 0 else "Your soldiers have captured %s from the %s!") % ([states.names[s]] if before < 0 else [states.names[s], civ(before).name]), "major_good" if before >= 0 else "good")
 	elif before == 0:
-		emit_signal("event", "The %s have captured %s from you!" % [c.name, states.names[s]], "bad")
+		emit_signal("event", "The %s have captured %s from you!" % [c.name, states.names[s]], "major_bad")
 	elif have_met(0, civ_id) and before >= 0:
-		emit_signal("event", "The %s captured %s from the %s." % [c.name, states.names[s], civ(before).name], "info")
+		emit_signal("event", "The %s captured %s from the %s." % [c.name, states.names[s], civ(before).name], "major")
 	if before >= 0:
 		on_tribes_clash(civ_id, before)
 
@@ -1095,14 +1153,24 @@ func toggle_cheats(c: Colony) -> void:
 
 # ================================================================ war & diplomacy
 func at_war(a: int, b: int) -> bool:
-	return a != b and wars.has(_key(a, b))
+	if a == b:
+		return false
+	if a >= 0 and b >= 0 and a < colonies.size() and b < colonies.size() and (colonies[a].bandit or colonies[b].bandit):
+		return true          # outlaws are everyone's enemy
+	return wars.has(_key(a, b))
 
 
-func enemies_of(a: int) -> Array:
+## Tribes at war with `a`. The outlaw band counts only when `with_bandits` is set
+## (for fighting); diplomacy, war lists and peace never include it.
+func enemies_of(a: int, with_bandits := false) -> Array:
 	var out: Array = []
+	var me := civ(a)
 	for c in colonies:
-		if not c.collapsed and at_war(a, c.civ_id):
-			out.append(c)
+		if c.collapsed or not at_war(a, c.civ_id):
+			continue
+		if (c.bandit or me.bandit) and not with_bandits:
+			continue
+		out.append(c)
 	return out
 
 
@@ -1133,11 +1201,11 @@ func declare_war(a: int, b: int, border_incident := false) -> bool:
 	var ca := civ(a)
 	var cb := civ(b)
 	if a == 0:
-		emit_signal("event", "You have declared war on the %s!" % cb.name, "bad")
+		emit_signal("event", "You have declared war on the %s!" % cb.name, "major_bad")
 	elif b == 0:
-		emit_signal("event", "The %s have declared war on you! Arm your soldiers and man the walls." % ca.name, "bad")
+		emit_signal("event", "The %s have declared war on you! Arm your soldiers and man the walls." % ca.name, "major_bad")
 	elif have_met(0, a) or have_met(0, b):
-		emit_signal("event", "War! The %s have attacked the %s." % [ca.name, cb.name], "warn")
+		emit_signal("event", "War! The %s have attacked the %s." % [ca.name, cb.name], "major")
 	_call_allies(a, b)
 	return true
 
@@ -1161,9 +1229,9 @@ func make_peace(a: int, b: int) -> void:
 			p.task = {}
 			p.path = []
 	if a == 0 or b == 0:
-		emit_signal("event", "Peace has been made with the %s." % civ(b if a == 0 else a).name, "good")
+		emit_signal("event", "Peace has been made with the %s." % civ(b if a == 0 else a).name, "major_good")
 	elif have_met(0, a) or have_met(0, b):
-		emit_signal("event", "The %s and the %s have made peace." % [civ(a).name, civ(b).name], "info")
+		emit_signal("event", "The %s and the %s have made peace." % [civ(a).name, civ(b).name], "major")
 
 
 ## Chance (0..1) that `b` accepts a peace offer from `a` right now.
@@ -1500,7 +1568,7 @@ func kill(p: Human, cause: String) -> void:
 		if c.civ_id == 0:
 			emit_signal("event", "Your tribe has perished. Its story ends here.", "bad")
 		elif have_met(0, c.civ_id):
-			emit_signal("event", "The %s have perished. Their camp lies empty." % c.name, "warn")
+			emit_signal("event", "The %s have perished. Their camp lies empty." % c.name, "major")
 		else:
 			emit_signal("event", "Travellers whisper that a distant tribe, the %s, has vanished." % c.name, "info")
 
@@ -1514,7 +1582,7 @@ func to_dict() -> Dictionary:
 	for c in colonies:
 		cols.append(c.to_dict())
 	return {
-		"version": 3, "seed": world.seed_value, "size": world.w, "time": time.t, "skip_days": time.skip_days,
+		"version": 3, "seed": world.seed_value, "size": world.w, "time": time.t, "skip_days": time.skip_days, "cal_scale": time.scale,
 		"weather": weather.to_dict(), "colonies": cols, "animals": an,
 		"contacts": contacts.keys(), "relations": relations.duplicate(), "wars": wars.duplicate(true),
 		"config": Config.to_dict(), "state_owner": Array(states.owners),
@@ -1522,7 +1590,7 @@ func to_dict() -> Dictionary:
 		"next_id": next_id, "next_animal_id": next_animal_id, "next_bid": next_bid,
 		"ships": ships.map(func(sh): return sh.to_dict()), "next_ship_id": next_ship_id,
 		"used_names": used_names.keys(), "rng": rng.state, "last_day": _last_day,
-		"borders": Borders.to_dict(self), "roads": road_tiles.keys(), "deals": Deals.to_dict(self),
+		"defect_asks": defect_asks.duplicate(true), "borders": Borders.to_dict(self), "roads": road_tiles.keys(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
 	}
 
 
@@ -1537,6 +1605,7 @@ func from_dict(d: Dictionary) -> void:
 	world.build_regrow_list()
 	time.t = float(d["time"])
 	time.skip_days = float(d.get("skip_days", 0.0))
+	time.scale = float(d.get("cal_scale", TimeSystem.CAL_SCALE))
 	weather.setup(world.seed_value)
 	weather.from_dict(d["weather"])
 	colonies.clear()
@@ -1555,6 +1624,7 @@ func from_dict(d: Dictionary) -> void:
 	wars = d.get("wars", {})
 	Borders.from_dict(self, d.get("borders", {}))
 	Deals.from_dict(self, d.get("deals", {}))
+	defect_asks = d.get("defect_asks", [])
 	name_rng.randomize()
 	animals.clear()
 	for ad in d["animals"]:
@@ -1592,10 +1662,12 @@ func from_dict(d: Dictionary) -> void:
 			people_by_id[p.id] = p
 	road_tiles.clear()
 	for i in d.get("roads", []):
-		world.road[int(i)] = 1
+		var rq := Vector2i(int(i) % world.w, int(i) / world.w)
+		world.road[int(i)] = 2 if world.bridgeable(rq) else 1
 		road_tiles[int(i)] = true
 	for c in colonies:
 		refresh_zones(c)
+	fog.from_save(world, d.get("fog", {}))
 	paths = Pathfinder.new()
 	paths.setup(world)
 	_setup_sea()

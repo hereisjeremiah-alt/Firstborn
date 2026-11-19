@@ -15,7 +15,7 @@ var res_amount := PackedInt32Array()
 var fish := PackedFloat32Array()       # fish stock on water tiles
 var blocked := PackedByteArray()       # 1 = fence (blocks animals)
 var wall := PackedByteArray()          # 1 = finished wall (blocks people too)
-var road := PackedByteArray()          # 1 = road (people walk about twice as fast)
+var road := PackedByteArray()          # 1 = road, 2 = bridge (people walk about twice as fast)
 var snowy := PackedByteArray()         # 1 = ground currently covered by seasonal snow
 var spawn := Vector2i.ZERO
 var regrow_tiles := PackedInt32Array()   # tiles whose resource can grow back (scanned daily)
@@ -92,6 +92,8 @@ func cost_at(p: Vector2i) -> float:
 	if not inb(p):
 		return 0.0
 	var i := idx(p)
+	if road[i] == 2:
+		return Defs.ROAD_SPEED_COST + 0.05          # a bridge over a lake or river
 	var c: float = Defs.TERRAIN[terrain[i]]["cost"]
 	if c <= 0.0:
 		return 0.0
@@ -116,6 +118,14 @@ func animal_walkable(p: Vector2i) -> bool:
 	if blocked[i] == 1:
 		return false
 	return Defs.TERRAIN[terrain[i]]["cost"] > 0.0 and terrain[i] != Defs.T.RIVER
+
+
+## Lakes and rivers can be bridged; the sea can't.
+func bridgeable(p: Vector2i) -> bool:
+	if not inb(p):
+		return false
+	var t := terrain[idx(p)]
+	return t == Defs.T.LAKE or t == Defs.T.RIVER
 
 
 func is_water(p: Vector2i) -> bool:

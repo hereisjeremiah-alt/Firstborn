@@ -7,11 +7,13 @@ var world_size := 384
 var load_slot := -1      # >= 0 means "load this save slot instead of starting a new world"
 var tribe_name := "Your Tribe"
 var ai_tribes := 4      # rival AI civilizations
+var fog_of_war := false # the map starts hidden; your Billies uncover it
 
 # ---------------------------------------------------------------- custom rules
 ## [key, label, min, max, step, default, format, group, help]
 ## format: "x" = multiplier, "%" = percent (stored 0..1), "d" = plain number, "b" = on/off
 const RULES := [
+	["calendar_speed", "Calendar speed (days per work-day)", 1.0, 30.0, 0.5, 5.0, "x", "Time", "How fast dates, seasons, years and the visible time of day move compared with daily life. Billies still walk and work at the same pace. Aging and the seasons follow the calendar."],
 	["birth_chance", "Chance of conceiving", 0.1, 4.0, 0.1, 1.0, "x", "People", "How often couples have children."],
 	["pregnancy_days", "Pregnancy length (days)", 10.0, 120.0, 5.0, 45.0, "d", "People", "Days from expecting to birth."],
 	["twin_chance", "Twin chance", 0.0, 0.5, 0.01, 0.12, "%", "People", "Chance a birth brings twins."],
@@ -39,7 +41,10 @@ const RULES := [
 	["start_money", "Starting Talents", 0.0, 1000.0, 10.0, 100.0, "d", "World", "Money in every tribe's bank at the start."],
 	["shell_income", "Daily Talents per person", 0.0, 2.0, 0.05, 0.25, "d", "World", "Talents each tribe gathers per person per day."],
 	["ai_aggression", "Rival aggression", 0.0, 3.0, 0.1, 1.0, "x", "World", "How readily AI tribes go to war."],
+	["bandit_camps", "Bandit camps", 0.0, 10.0, 1.0, 3.0, "d", "World", "Outlaw camps placed in the wilds at the start of a new game. Bandits rob villages and ambush traders."],
 	["trespass_war", "War chance when caught trespassing", 0.0, 1.0, 0.05, 0.3, "%", "World", "Chance a tribe goes to war when it catches a foreign Billy on its land without permission. +10% for every age after the Caveman Age."],
+	["defect_below", "Unhappiness that splits a tribe", 0.0, 0.6, 0.05, 0.2, "%", "World", "When a tribe's political happiness falls below this, a group of its people may leave."],
+	["defect_chance", "Yearly chance of a split", 0.0, 1.0, 0.05, 0.4, "%", "World", "Chance each calendar year that an unhappy tribe splits: a group leaves to join another tribe (if allowed) or to found their own."],
 	["election_years", "Years between elections", 1.0, 30.0, 1.0, 4.0, "d", "World", "Calendar years a Chief or President serves before the next election."],
 ]
 var rules := {}

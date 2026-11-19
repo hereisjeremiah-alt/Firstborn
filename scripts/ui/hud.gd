@@ -6,6 +6,7 @@ extends CanvasLayer
 var game: Node
 var root: Control
 var stat_labels := {}
+var mood_label: Label
 var season_icon: TextureRect
 var clock_icon: TextureRect
 var date_label: Label
@@ -73,7 +74,9 @@ func setup(g: Node) -> void:
 	_build_settings_layer()
 	_build_fps()
 	_build_passage_dialog()
+	_build_trade_window()
 	_build_deal_card()
+	_build_announce()
 	_build_planner()
 
 
@@ -82,6 +85,8 @@ func setup(g: Node) -> void:
 var passage_panel: PanelContainer
 var passage_label: Label
 var passage_civ := -1
+var passage_yes: Button
+var passage_defect := false     # showing a group that wants to join (Politics) instead of a passage request
 
 
 func _build_passage_dialog() -> void:
@@ -103,7 +108,8 @@ func _build_passage_dialog() -> void:
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
 	h.add_theme_constant_override("separation", 10)
 	v.add_child(h)
-	h.add_child(_button("Allow for %d years" % int(Borders.ACCESS_YEARS), _on_passage.bind(true), 150))
+	passage_yes = _button("Allow for %d years" % int(Borders.ACCESS_YEARS), _on_passage.bind(true), 150)
+	h.add_child(passage_yes)
 	h.add_child(_button("Refuse", _on_passage.bind(false), 100))
 	h.add_child(_button("View their tribe", _on_passage_view, 130))
 
@@ -111,9 +117,29 @@ func _build_passage_dialog() -> void:
 func _refresh_passage() -> void:
 	var sim: Sim = game.sim
 	if sim.access_asks.is_empty():
+		if not sim.defect_asks.is_empty():
+			var ask: Dictionary = sim.defect_asks[0]
+			var fc := sim.civ(int(ask["from"]))
+			if not passage_defect or passage_civ != fc.civ_id:
+				passage_defect = true
+				passage_civ = fc.civ_id
+				var names := PackedStringArray()
+				for pid in ask["people"]:
+					var q := sim.person(int(pid))
+					if q != null:
+						names.append(q.name)
+				passage_label.text = "%d unhappy people of the %s want to leave their tribe and join yours: %s.\nIf you refuse, they won't join or cross into your land." % [names.size(), fc.name, ", ".join(names)]
+				passage_yes.text = "Welcome them"
+			passage_panel.visible = true
+			return
 		passage_panel.visible = false
 		passage_civ = -1
+		passage_defect = false
 		return
+	if passage_defect:
+		passage_defect = false
+		passage_civ = -1
+		passage_yes.text = "Allow for %d years" % int(Borders.ACCESS_YEARS)
 	var cid := int(sim.access_asks[0])
 	var oc := sim.civ(cid)
 	if oc == null or oc.collapsed or sim.at_war(0, cid):
@@ -128,7 +154,11 @@ func _refresh_passage() -> void:
 
 
 func _on_passage(yes: bool) -> void:
-	if passage_civ >= 0:
+	if passage_defect and not game.sim.defect_asks.is_empty():
+		Politics.answer(game.sim, game.sim.defect_asks[0], yes)
+		passage_defect = false
+		passage_yes.text = "Allow for %d years" % int(Borders.ACCESS_YEARS)
+	elif passage_civ >= 0:
 		Borders.answer(game.sim, passage_civ, yes)
 	passage_civ = -1
 	_refresh_passage()
@@ -179,8 +209,8 @@ func _build_planner() -> void:
 	planner.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	planner.offset_bottom = -12
 	planner.offset_top = -112
-	planner.offset_left = -330
-	planner.offset_right = 330
+	planner.offset_left = -360
+	planner.offset_right = 360
 	planner.visible = false
 	root.add_child(planner)
 	var v := VBoxContainer.new()
@@ -202,7 +232,7 @@ func _build_planner() -> void:
 		b.tooltip_text = zd["desc"]
 		h.add_child(b)
 	h.add_child(_button("Erase zone", game.set_tool.bind("zone0"), 90))
-	h.add_child(_button("Road", game.set_tool.bind("road"), 60))
+	h.add_child(_button("Road / Bridge", game.set_tool.bind("road"), 110))
 	h.add_child(_button("Remove road", game.set_tool.bind("unroad"), 100))
 	planner_hint = _label("", 12, Color(0.8, 0.78, 0.7))
 	planner_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -228,7 +258,7 @@ func _planner_hint() -> String:
 		var zd: Dictionary = Defs.ZONES[z]
 		return "Drag a box to paint a %s zone. %s" % [zd["name"], zd["desc"]]
 	if m == "road":
-		return "Drag from one point to another to lay out a road (it bends once). Laborers and builders build it; Billies walk about twice as fast on roads."
+		return "Drag from one point to another to lay out a road (it bends once). Across a lake or river it becomes a bridge (%d wood per tile, built from the shore out). Laborers and builders build it; Billies walk about twice as fast on roads." % Defs.BRIDGE_WOOD
 	if m == "unroad":
 		return "Drag a box to remove roads and road plans."
 	return "Pick a zone or the road tool. Zones: buildings standing in the zone that suits them get bonuses. Roads make Billies faster."
@@ -371,6 +401,15 @@ func _build_top_bar() -> void:
 		box.mouse_filter = Control.MOUSE_FILTER_PASS
 		h.add_child(box)
 		stat_labels[key] = l
+	# political happiness
+	var mood_box := HBoxContainer.new()
+	mood_box.tooltip_text = "Political happiness: how content your people are with how they're ruled.\nBelow 20%, groups may leave. Details in the Colony panel (C)."
+	mood_box.mouse_filter = Control.MOUSE_FILTER_PASS
+	var ml := _label("Mood", 13, Color(0.75, 0.72, 0.65))
+	mood_box.add_child(ml)
+	mood_label = _label("60%")
+	mood_box.add_child(mood_label)
+	h.add_child(mood_box)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(spacer)
@@ -467,6 +506,9 @@ func _build_feed() -> void:
 
 
 func push_event(text: String, kind: String) -> void:
+	if kind.begins_with("major"):
+		_announce(text, kind)
+		return
 	var l := _label(text, 14, KIND_COLORS.get(kind, KIND_COLORS["info"]))
 	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	l.add_theme_constant_override("outline_size", 4)
@@ -477,6 +519,76 @@ func push_event(text: String, kind: String) -> void:
 	feed.add_child(l)
 	feed_box.visible = true
 	_trim_feed()
+
+
+# ================================================================ big announcements
+## Major events (wars, peace, leaders, elections, new ages, defections, robberies) appear
+## in large text at the top of the screen instead of the side feed.
+var announce_box: VBoxContainer
+const ANNOUNCE_TIME := 8.0
+
+
+func _build_announce() -> void:
+	announce_box = VBoxContainer.new()
+	announce_box.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	announce_box.offset_top = 50
+	announce_box.offset_left = -380
+	announce_box.offset_right = 380
+	announce_box.alignment = BoxContainer.ALIGNMENT_BEGIN
+	announce_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	announce_box.add_theme_constant_override("separation", 4)
+	root.add_child(announce_box)
+
+
+func _announce(text: String, kind: String) -> void:
+	var cols := {"major": Color(1.0, 0.86, 0.5), "major_good": Color(0.62, 1.0, 0.55), "major_bad": Color(1.0, 0.5, 0.42)}
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.06, 0.05, 0.04, 0.82)
+	sb.border_color = (cols.get(kind, cols["major"]) as Color).darkened(0.25)
+	sb.set_border_width_all(0)
+	sb.border_width_bottom = 2
+	sb.border_width_top = 2
+	sb.set_corner_radius_all(6)
+	sb.content_margin_left = 16
+	sb.content_margin_right = 16
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var l := _label(text, 19, cols.get(kind, cols["major"]))
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	l.add_theme_constant_override("outline_size", 5)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.custom_minimum_size.x = 728
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(l)
+	panel.set_meta("age", 0.0)
+	announce_box.add_child(panel)
+	while announce_box.get_child_count() > 3:
+		var old := announce_box.get_child(0)
+		announce_box.remove_child(old)
+		old.queue_free()
+	Sound.play("confirm")
+
+
+func _age_announcements(delta: float) -> void:
+	for n in announce_box.get_children():
+		var age := float(n.get_meta("age")) + delta
+		n.set_meta("age", age)
+		(n as Control).modulate.a = clampf((ANNOUNCE_TIME - age) / 1.2, 0.0, 1.0) * clampf(age / 0.25, 0.0, 1.0)
+		if age > ANNOUNCE_TIME:
+			announce_box.remove_child(n)
+			n.queue_free()
+	# cards for passage requests and deals move down while announcements show
+	var push := 0.0
+	for n in announce_box.get_children():
+		push += (n as Control).size.y + 4.0
+	if passage_panel != null:
+		passage_panel.offset_top = 52 + push
+	if deal_panel != null:
+		deal_panel.offset_top = 52 + push
 
 
 ## Drops the oldest lines until everything fits in the box.
@@ -564,6 +676,8 @@ func toggle_panel(which: String) -> void:
 func close_panel() -> void:
 	research_layer.visible = false
 	build_layer.visible = false
+	if trade_layer != null:
+		trade_layer.visible = false
 	settings_layer.visible = false
 	side_panel.visible = false
 	current_panel = ""
@@ -571,7 +685,7 @@ func close_panel() -> void:
 
 
 func is_panel_open() -> bool:
-	return side_panel.visible or research_layer.visible or build_layer.visible or settings_layer.visible
+	return side_panel.visible or research_layer.visible or build_layer.visible or settings_layer.visible or (trade_layer != null and trade_layer.visible)
 
 
 func _clear_body() -> void:
@@ -1010,7 +1124,7 @@ func _on_research(id: String) -> void:
 
 func _on_advance_era() -> void:
 	if game.sim.colony.advance_era():
-		push_event("Your tribe has entered the %s! New research and buildings are available." % game.sim.colony.era, "good")
+		push_event("Your tribe has entered the %s! New research and buildings are available." % game.sim.colony.era, "major_good")
 		game.sim.emit_signal("buildings_changed")
 		_tree_sig = ""
 		_refresh_research()
@@ -1178,6 +1292,7 @@ func _panel_colony() -> void:
 	var s := "[url=rename_tribe][color=#ffd27a]Rename tribe[/color][/url]\n[b]Era:[/b] %s   [b]Race:[/b] %s\n" % [c.era, Config.race_name(c.race)]
 	if c.government != "":
 		s += "[b]Government:[/b] %s%s\n" % [Defs.GOVERNMENTS[c.government]["name"], " (Capitol: bonuses +50%)" if c.has_built("capitol") else ""]
+	s += _approval_text(c)
 	s += _leader_text(sim, c, true)
 	s += _election_text(sim, c)
 	var foes := sim.enemies_of(0)
@@ -1227,7 +1342,7 @@ func _panel_colony() -> void:
 	s += "\n[b]Other tribes[/b]\n"
 	var unknown := 0
 	for oc in sim.colonies:
-		if oc.civ_id == 0:
+		if oc.civ_id == 0 or oc.bandit:
 			continue
 		if not sim.have_met(0, oc.civ_id) and not game.reveal_all:
 			unknown += 1
@@ -1309,13 +1424,22 @@ The calendar runs 5x faster than daily life. To reach the next age, research eve
 Every few years the adults elect a Chief (Caveman and Stone Age). From the Bronze Age they elect a President, at most two terms in a row. A leader's best trade makes the whole tribe better at it.
 
 [b]Plan Town (Z)[/b]
-Paint Farming, Housing and Workshop zones and lay out roads. Buildings standing in the zone that suits them get bonuses (farms +25%, homes +1 bed and better sleep, workshops and research 20% faster). Billies walk about twice as fast on roads; laborers and builders build them.
+Paint Farming, Housing and Workshop zones and lay out roads (across lakes and rivers they become bridges). Nothing can be built on a road or a planned road, except a gate. Buildings standing in the zone that suits them get bonuses (farms +25%, homes +1 bed and better sleep, workshops and research 20% faster). Billies walk about twice as fast on roads; laborers and builders build them.
 
 [b]Milestones (G)[/b]
 27 goals, from your first fire to a realm of many lands. Each pays Talents, knowledge or research points.
 
 [b]Soldiers[/b]
 Warriors fight up close, Archers from range. Train them from your own people at a Training Camp or Mercenary Hall, or hire armed newcomers for Talents at a Mercenary Hall (research Mercenary Pacts, Stone Age).
+
+[b]Trading[/b]
+Click another tribe's flag → Trade. Choose goods to buy or sell and people to buy, then Send trader. A Billy with the Trader job walks there carrying your goods and Talents, and back with what you bought (bought people walk home themselves). Research Trade Wagons (Stone Age) to carry four times as much per trip.
+
+[b]Bandits[/b]
+Outlaw camps in the wilds rob villages and ambush traders who pass nearby. Soldiers fight them; select a camp and send soldiers to destroy it and recover part of their stash.
+
+[b]Political happiness (Mood)[/b]
+Shown in the top bar and the Colony panel: government, leader, food, homes, health, wars, wealth and stolen elections all count. Below 20%, a group may leave each year to join another tribe (if that tribe agrees) or found their own.
 
 [b]Deals[/b]
 Rivals send envoys with trades, alliances, tribute demands and land demands: accept, decline or counter-offer. From a rival's flag you can propose an alliance, ask for a trade, or demand tribute or land. Allies defend each other.
@@ -1701,6 +1825,17 @@ func _refresh_info() -> void:
 						acts.append(["Forge %s (%s)" % [wd["name"], Defs.cost_text(wd["cost"])], _on_forge.bind(w)])
 					acts.append(["Auto-forge: " + ("ON" if b.auto_craft else "OFF"), _on_toggle_auto_forge.bind(b.id)])
 				acts.append(["Cancel blueprint" if not b.built else "Demolish", _on_demolish])
+			if sim.civ(b.civ_id).bandit:
+				var bc := sim.civ(b.civ_id)
+				var here := 0
+				for q in bc.living():
+					if int(q.task_memory.get("camp", -1)) == b.id:
+						here += 1
+				s += "[color=#ff9f7a]Outlaws: %d. They rob villages and ambush traders nearby.[/color]\nTheir stash: %d %s and stolen goods. Destroy the camp to recover a share.\n" % [here, int(bc.money), Defs.MONEY_NAME]
+				if not sim.colony.soldiers().is_empty():
+					acts.append(["Send soldiers to destroy it", _on_attack_camp.bind(b.id)])
+				else:
+					s += "[color=#a09a88]You need soldiers to attack it.[/color]\n"
 			var zt := Defs.zone_for(b.type)
 			if zt > 0 and b.civ_id == 0:
 				var zd: Dictionary = Defs.ZONES[zt]
@@ -1936,6 +2071,7 @@ func show_picker(on: bool) -> void:
 func _process(delta: float) -> void:
 	if game == null or game.sim == null:
 		return
+	_age_announcements(delta)
 	# fade the event feed
 	for n in feed.get_children():
 		var l := n as Label
@@ -2003,6 +2139,8 @@ func _refresh_top() -> void:
 	stat_labels["sticks"].text = str(int(c.count("sticks")))
 	stat_labels["health"].text = "%d%%" % int(c.health_pct())
 	stat_labels["money"].text = "%d %s" % [int(c.money), Defs.MONEY_NAME]
+	mood_label.text = "%d%%" % roundi(c.approval)
+	mood_label.add_theme_color_override("font_color", Color(0.62, 1.0, 0.55) if c.approval >= 50.0 else (Color(1.0, 0.85, 0.45) if c.approval >= 20.0 else Color(1.0, 0.5, 0.42)))
 	var season := sim.time.season()
 	season_icon.texture = Art.icons[["spring", "summer", "fall", "winter"][season]]
 	date_label.text = "%s · %s" % [sim.time.season_name(), sim.time.date_text()]
@@ -2021,6 +2159,15 @@ func _on_forge(w: String) -> void:
 	var c: Colony = game.sim.colony
 	c.weapon_orders.append(w)
 	push_event("Queued at the blacksmith: %s. Smiths take the materials from storage when they start." % Defs.WEAPONS[w]["name"], "info")
+	_actions_sig = ""
+
+
+func _on_attack_camp(bid: int) -> void:
+	var n := 0
+	for q in game.sim.colony.soldiers():
+		if HumanAI.order_attack(game.sim, q, "building", bid):
+			n += 1
+	push_event("%d soldiers march on the bandit camp." % n, "info")
 	_actions_sig = ""
 
 
@@ -2074,6 +2221,8 @@ func _info_civ(sim: Sim, oc: Colony) -> void:
 	if oc.government != "":
 		s += "Government: %s\n" % Defs.GOVERNMENTS[oc.government]["name"]
 	s += _leader_text(sim, oc, false)
+	if sim.have_met(0, oc.civ_id) or oc.civ_id == 0:
+		s += "Their people: %s (%d%%)\n" % [Politics.mood_word(oc.approval), roundi(oc.approval)]
 	var acts: Array = []
 	if oc.civ_id == 0:
 		s += "This is your tribe.  Talents: %d   Soldiers: %d\n" % [int(oc.money), oc.soldiers().size()]
@@ -2111,7 +2260,6 @@ func _info_civ(sim: Sim, oc: Colony) -> void:
 				acts.append(["Break alliance", _on_deal_propose.bind(oc.civ_id, "break")])
 			else:
 				acts.append(["Propose alliance (%d%%)" % roundi(clampf(0.15 + sim.relation(0, oc.civ_id) / 100.0, 0.02, 0.9) * 100.0), _on_deal_propose.bind(oc.civ_id, "alliance")])
-			acts.append(["Ask for a trade", _on_deal_propose.bind(oc.civ_id, "trade")])
 			acts.append(["Demand tribute", _on_deal_propose.bind(oc.civ_id, "tribute")])
 			if me.era_i >= 1:
 				acts.append(["Demand land", _on_deal_propose.bind(oc.civ_id, "land")])
@@ -2130,6 +2278,8 @@ func _info_civ(sim: Sim, oc: Colony) -> void:
 		if theirs_left > 0.0:
 			s += "They may cross your land (%d more years).\n" % ceili(theirs_left)
 			acts.append(["Revoke their passage", _on_revoke_passage.bind(oc.civ_id)])
+	if oc.civ_id != 0 and met and not war:
+		acts.append(["Trade", open_trade.bind(oc.civ_id)])
 	acts.append(["Go to their camp", func(): game.camera.position = sim.world.center_of(oc.home)])
 	info_text.text = s
 	_set_actions("civ%d|%s|%s|%s|%s|%d|%d" % [oc.civ_id, str(war), str(sim.peace_offers.has(oc.civ_id)), str(met), str(Deals.allied(sim, 0, oc.civ_id)),
@@ -2156,6 +2306,24 @@ func _on_revoke_passage(cid: int) -> void:
 	Borders.revoke(game.sim, cid, 0)
 	push_event("The %s may no longer cross your land." % game.sim.civ(cid).name, "info")
 	_actions_sig = ""
+
+
+## Political happiness and what makes it up.
+func _approval_text(c: Colony) -> String:
+	var v := c.approval
+	var col := "9fe08a" if v >= 50.0 else ("ffd27a" if v >= 20.0 else "ff8a7a")
+	var s := "[b]Political happiness:[/b] [color=#%s]%d%% — %s[/color]\n" % [col, roundi(v), Politics.mood_word(v)]
+	var parts := PackedStringArray()
+	for k in c.approval_parts.keys():
+		var pv := float(c.approval_parts[k])
+		if k == "Base contentment" or absf(pv) < 0.5:
+			continue
+		parts.append("[color=#%s]%s %+d[/color]" % ["9fe08a" if pv > 0 else "ff9f7a", k, roundi(pv)])
+	if not parts.is_empty():
+		s += "  " + ", ".join(parts) + "\n"
+	if v < Config.rule("defect_below") * 100.0:
+		s += "  [color=#ff8a7a]Below %d%%: each year there's a %d%% chance a group of your people leaves.[/color]\n" % [roundi(Config.rule("defect_below") * 100.0), roundi(Config.rule("defect_chance") * 100.0)]
+	return s
 
 
 ## The next election: who's standing, the forecast, and what the player can do about it.
@@ -2431,6 +2599,242 @@ func _open_settings() -> void:
 
 # ================================================================ build window
 # A window in the middle of the screen: one tab per age, structures grouped by kind.
+# ================================================================ trade window
+## Opened from another tribe's flag. Pick goods and people to buy, goods to sell; a trader
+## then walks over and back carrying everything.
+var trade_layer: PanelContainer
+var trade_body: VBoxContainer
+var trade_civ := -1
+var trade_spins := {}          # "buy:item" / "sell:item" -> SpinBox
+var trade_people := {}         # person id -> CheckBox
+var trade_total: RichTextLabel
+
+
+func _build_trade_window() -> void:
+	trade_layer = PanelContainer.new()
+	trade_layer.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	trade_layer.offset_left = -500
+	trade_layer.offset_right = 500
+	trade_layer.offset_top = -330
+	trade_layer.offset_bottom = 330
+	trade_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	trade_layer.visible = false
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.07, 0.065, 0.06, 1.0)
+	bg.border_color = Color(0.55, 0.45, 0.28)
+	bg.set_border_width_all(2)
+	bg.set_corner_radius_all(6)
+	bg.set_content_margin_all(12)
+	trade_layer.add_theme_stylebox_override("panel", bg)
+	root.add_child(trade_layer)
+	trade_body = VBoxContainer.new()
+	trade_body.add_theme_constant_override("separation", 6)
+	trade_layer.add_child(trade_body)
+
+
+func open_trade(cid: int) -> void:
+	var why := Trade.problem(game.sim, cid)
+	if why != "":
+		push_event(why, "warn")
+		return
+	side_panel.visible = false
+	research_layer.visible = false
+	build_layer.visible = false
+	trade_civ = cid
+	_fill_trade()
+	trade_layer.visible = true
+
+
+func _fill_trade() -> void:
+	var sim: Sim = game.sim
+	var c := sim.colony
+	var o := sim.civ(trade_civ)
+	for n in trade_body.get_children():
+		trade_body.remove_child(n)
+		n.queue_free()
+	trade_spins.clear()
+	trade_people.clear()
+	var head := HBoxContainer.new()
+	trade_body.add_child(head)
+	var title := _label("Trade with the %s" % o.name, 22, Color(1.0, 0.85, 0.5))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	head.add_child(_label("Relations: %s   Their bank: %d %s   Yours: %d" % [Sim.relation_label(sim.relation(0, o.civ_id)), int(o.money), Defs.MONEY_NAME, int(c.money)], 13, Color(0.8, 0.77, 0.7)))
+	head.add_child(_button("Close", close_panel, 80))
+	var cols := HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 14)
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	trade_body.add_child(cols)
+	# --- buy from them
+	var buy := _trade_column(cols, "Buy from them", "Price each · they have")
+	var any := false
+	for item in Defs.BASE_PRICE.keys():
+		var av := Trade.available(o, item)
+		if av <= 0:
+			continue
+		any = true
+		_trade_row(buy, "buy:" + item, Defs.item_name(item), "%.1f · %d" % [Trade.buy_price(sim, o, item), av], av)
+	if not any:
+		buy.add_child(_label("They have nothing to spare.", 12, Color(0.6, 0.58, 0.52)))
+	# --- sell to them
+	var sell := _trade_column(cols, "Sell to them", "They pay · you have")
+	any = false
+	for item in Defs.BASE_PRICE.keys():
+		var have := int(c.count(item))
+		if have <= 0:
+			continue
+		any = true
+		_trade_row(sell, "sell:" + item, Defs.item_name(item), "%.1f · %d" % [Trade.sell_price(sim, o, item), have], have)
+	if not any:
+		sell.add_child(_label("Your stores are empty.", 12, Color(0.6, 0.58, 0.52)))
+	# --- people
+	var ppl := _trade_column(cols, "People", "Price")
+	var forsale := Trade.people_for_sale(sim, o)
+	if forsale.is_empty():
+		ppl.add_child(_label("They won't part with anyone (they need at least 6 people and decent relations).", 12, Color(0.6, 0.58, 0.52)))
+	for q in forsale:
+		var row := HBoxContainer.new()
+		ppl.add_child(row)
+		var cb := CheckBox.new()
+		var kind := "child" if q.age_years() < 14.0 else ("man" if q.gender == "M" else "woman")
+		cb.text = "%s — %s, %d" % [q.name, kind, int(q.age_years())]
+		cb.focus_mode = Control.FOCUS_NONE
+		cb.toggled.connect(func(_on): _update_trade_total())
+		cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(cb)
+		row.add_child(_label("%d" % Trade.person_price(o, q), 13, Color(1.0, 0.85, 0.45)))
+		trade_people[q.id] = cb
+	# --- totals and orders
+	trade_total = RichTextLabel.new()
+	trade_total.bbcode_enabled = true
+	trade_total.fit_content = true
+	trade_total.scroll_active = false
+	trade_body.add_child(trade_total)
+	var bh := HBoxContainer.new()
+	bh.add_theme_constant_override("separation", 8)
+	trade_body.add_child(bh)
+	bh.add_child(_button("Send trader", _on_trade_send, 140))
+	bh.add_child(_button("Clear", _fill_trade, 80))
+	var orders := RichTextLabel.new()
+	orders.bbcode_enabled = true
+	orders.fit_content = true
+	orders.scroll_active = false
+	orders.meta_clicked.connect(_on_trade_order_link)
+	var ot := ""
+	for od in c.trade_orders:
+		var tr := sim.person(int(od["trader"]))
+		ot += "• With the %s: %s  [color=#a09a88](%s)[/color]  [url=cancel:%d][color=#ff9f7a]cancel[/color][/url]\n" % [sim.civ(int(od["civ"])).name, Trade.describe(sim, od),
+			("trader %s on the way" % tr.name) if tr != null and tr.alive and tr.job == "trader" else "waiting for a trader", int(od["id"])]
+	if ot != "":
+		orders.text = "[b]Open trade orders[/b]\n" + ot
+		trade_body.add_child(orders)
+	_update_trade_total()
+
+
+func _trade_column(parent: Control, title: String, sub: String) -> VBoxContainer:
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(v)
+	v.add_child(_label(title, 16, Color(1.0, 0.85, 0.5)))
+	v.add_child(_label(sub, 11, Color(0.6, 0.58, 0.52)))
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(300, 330)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(sc)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(list)
+	return list
+
+
+func _trade_row(list: VBoxContainer, key: String, name: String, info: String, max_n: int) -> void:
+	var row := HBoxContainer.new()
+	list.add_child(row)
+	var nl := _label(name, 13)
+	nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(nl)
+	row.add_child(_label(info, 12, Color(0.75, 0.72, 0.65)))
+	var sp := SpinBox.new()
+	sp.min_value = 0
+	sp.max_value = max_n
+	sp.step = 1
+	sp.custom_minimum_size.x = 80
+	sp.value_changed.connect(func(_v): _update_trade_total())
+	row.add_child(sp)
+	trade_spins[key] = sp
+
+
+func _trade_selection() -> Array:
+	var buy := {}
+	var sell := {}
+	for k in trade_spins.keys():
+		var n := int((trade_spins[k] as SpinBox).value)
+		if n <= 0:
+			continue
+		var parts: PackedStringArray = str(k).split(":")
+		if parts[0] == "buy":
+			buy[parts[1]] = n
+		else:
+			sell[parts[1]] = n
+	var people: Array = []
+	for pid in trade_people.keys():
+		if (trade_people[pid] as CheckBox).button_pressed:
+			people.append(int(pid))
+	return [buy, sell, people]
+
+
+func _update_trade_total() -> void:
+	if trade_total == null or trade_civ < 0:
+		return
+	var sim: Sim = game.sim
+	var c := sim.colony
+	var o := sim.civ(trade_civ)
+	var sel := _trade_selection()
+	var cost := 0.0
+	var income := 0.0
+	var goods_in := 0
+	var goods_out := 0
+	for k in sel[0].keys():
+		cost += Trade.buy_price(sim, o, k) * int(sel[0][k])
+		goods_in += int(sel[0][k])
+	for k in sel[1].keys():
+		income += Trade.sell_price(sim, o, k) * int(sel[1][k])
+		goods_out += int(sel[1][k])
+	for pid in sel[2]:
+		var q := sim.person(int(pid))
+		if q != null:
+			cost += Trade.person_price(o, q)
+	var cap := Trade.capacity(c)
+	var trips := maxi(1, ceili(float(maxi(goods_in, goods_out)) / cap))
+	var traders := c.living().filter(func(q): return q.job == "trader").size()
+	var t := "You pay [color=#ffd27a]%d[/color], you receive [color=#9fe08a]%d[/color] — net [b]%s%d %s[/b].   " % [int(cost), int(income), "+" if income >= cost else "−", int(absf(income - cost)), Defs.MONEY_NAME]
+	t += "A trader carries %d per trip%s → about %d trip%s.\n" % [cap, " (wagon)" if Trade.has_wagon(c) else " (research Trade Wagons for 4x)", trips, "" if trips == 1 else "s"]
+	if traders == 0:
+		t += "[color=#ff8a7a]Nobody has the Trader job — give someone that job in the Jobs panel, or the order will wait.[/color]"
+	elif cost - income > c.money:
+		t += "[color=#ff8a7a]You don't have enough %s for this.[/color]" % Defs.MONEY_NAME
+	else:
+		t += "[color=#a09a88]%d trader%s. Bought people walk to your village on their own. Bandits may ambush traders near their camps.[/color]" % [traders, "" if traders == 1 else "s"]
+	trade_total.text = t
+
+
+func _on_trade_send() -> void:
+	var sel := _trade_selection()
+	var why := Trade.place_order(game.sim, trade_civ, sel[0], sel[1], sel[2])
+	if why != "":
+		push_event(why, "warn")
+		return
+	push_event("Trade order placed with the %s. Your trader will carry it out." % game.sim.civ(trade_civ).name, "good")
+	_fill_trade()
+
+
+func _on_trade_order_link(meta: Variant) -> void:
+	var m := str(meta)
+	if m.begins_with("cancel:"):
+		Trade.cancel(game.sim, int(m.substr(7)))
+		_fill_trade()
+
+
 func _build_build_window() -> void:
 	build_layer = PanelContainer.new()
 	build_layer.set_anchors_and_offsets_preset(Control.PRESET_CENTER)

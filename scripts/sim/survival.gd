@@ -7,6 +7,9 @@ const COMFORT_TEMP := 5.0   # hide-clad cavemen tolerate cool weather
 
 
 static func tick(sim: Sim, p: Human, dt: float) -> void:
+	if sim.civ(p.civ_id).bandit:
+		Bandits.keep_fed(p, dt)
+		return
 	var hours := dt / Defs.HOUR
 	var days := hours / 24.0
 	var t := sim.world.tile_of(p.pos)
@@ -140,7 +143,7 @@ static func tick(sim: Sim, p: Human, dt: float) -> void:
 	# --- age
 	# children grow up three times faster than adults age, so the tribe gets new workers sooner
 	# aging follows the calendar, which runs TimeSystem.CAL_SCALE times faster than daily life
-	p.age_days += days * TimeSystem.CAL_SCALE * (Config.rule("child_growth") if p.age_years() < 16.0 else Config.rule("aging_speed"))
+	p.age_days += days * sim.time.scale * (Config.rule("child_growth") if p.age_years() < 16.0 else Config.rule("aging_speed"))
 
 	if p.health <= 0.0:
 		sim.kill(p, why if why != "" else "poor health")

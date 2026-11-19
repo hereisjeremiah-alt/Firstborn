@@ -41,7 +41,7 @@ static func auto_research(sim: Sim, c: Colony) -> void:
 	if c.can_advance_era():
 		c.advance_era()
 		if sim.have_met(0, c.civ_id):
-			sim.emit_signal("event", "The %s have entered the %s!" % [c.name, c.era], "info")
+			sim.emit_signal("event", "The %s have entered the %s!" % [c.name, c.era], "major")
 		return
 	var best := ""
 	var best_cost := 1e9
@@ -131,6 +131,9 @@ static func desired_jobs(sim: Sim, c: Colony, n: int) -> Dictionary:
 		+ (1 if not c.ore_needed().is_empty() and n >= 3 else 0)
 	want["researcher"] = (1 if c.count_type("research_table", false) > 0 and n >= 3 else 0) + (1 if n >= 10 else 0)
 	want["trader"] = 1 if n >= 7 and c.era_i >= 1 and not sim.trade_partners(c).is_empty() else 0
+	if c.is_player:
+		# open trade orders always get a trader; without orders the player's traders have nothing to do
+		want["trader"] = (1 if not c.trade_orders.is_empty() else 0) + (1 if c.trade_orders.size() >= 3 else 0)
 	var war := not sim.enemies_of(c.civ_id).is_empty()
 	if c.job_allowed("soldier"):
 		var aggr := Config.rule("ai_aggression") if not c.is_player else 1.0
@@ -151,9 +154,29 @@ static func desired_jobs(sim: Sim, c: Colony, n: int) -> Dictionary:
 
 
 static func assign_jobs(sim: Sim, c: Colony) -> void:
+	_assign_jobs(sim, c)
+	# the player's open trade orders always have a trader
+	if c.is_player and not c.trade_orders.is_empty() and c.living().filter(func(q): return q.job == "trader").is_empty():
+		var pick: Human = null
+		for q in c.living():
+			if q.can_work() and q.is_adult() and q.job in ["laborer", "gatherer", "woodcutter", "hunter", "builder"] and not q.drafted:
+				if pick == null or q.skill("trader") > pick.skill("trader"):
+					pick = q
+		if pick != null:
+			pick.job = "trader"
+			pick.task = {}
+			sim.notify(0, "%s took up the Trader job to carry out your trade orders." % pick.name, "info")
+
+
+static func _assign_jobs(sim: Sim, c: Colony) -> void:
 	var workers: Array = []
+	var keep_trader := c.is_player and not c.trade_orders.is_empty()
 	for p in c.living():
-		if p.can_work() and not (p.drafted and p.job == "soldier"):
+		if p.drafted and p.job == "soldier":
+			continue
+		if keep_trader and p.job == "trader":
+			continue          # busy with the player's trade orders
+		if p.can_work():
 			workers.append(p)
 	var n := workers.size()
 	if n == 0:
@@ -362,9 +385,14 @@ static func plan_defenses(sim: Sim, c: Colony) -> void:
 			if why.begins_with("Clear"):
 				c.clear_marks[sim.world.idx(q)] = true      # cut the tree down first
 				continue
+			var wtype := "wall"
+			if why.begins_with("Roads"):
+				# a road runs through the wall line: put a gate across it instead
+				wtype = "gate"
+				why = sim.can_place(c, "gate", q)
 			if why != "":
 				continue
-			var b := sim.place_building(c, "wall", q)
+			var b := sim.place_building(c, wtype, q)
 			if b != null:
 				b.tier = c.wall_tier
 				placed += 1
@@ -450,7 +478,7 @@ static func diplomacy(sim: Sim, c: Colony) -> void:
 			for i in n:
 				HumanAI.order_raid(sim, armed[i], e.civ_id, HumanAI.PRIO_RAID)
 			if e.civ_id == 0:
-				sim.emit_signal("event", "Warriors of the %s are marching on your village!" % c.name, "bad")
+				sim.emit_signal("event", "Warriors of the %s are marching on your village!" % c.name, "major_bad")
 
 
 ## Finds a free spot near the tribe's home, leaving a walkway around every building.

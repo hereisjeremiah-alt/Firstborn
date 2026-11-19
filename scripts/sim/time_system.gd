@@ -8,10 +8,20 @@ extends RefCounted
 ## Real-world calendar: 365-day years, 12 months, seasons of three months.
 ## Spring = Mar–May, Summer = Jun–Aug, Fall = Sep–Nov, Winter = Dec–Feb. A new game starts on March 1.
 
-const CAL_SCALE := 5.0
+const CAL_SCALE := 5.0   # default calendar speed (Game Rules: "Calendar speed")
 
 var t := 0.30          # elapsed simulation days since the start (fractional)
-var skip_days := 0.0   # calendar days skipped with a Monolith
+var skip_days := 0.0   # calendar days skipped with a Monolith (also absorbs calendar-speed changes)
+var scale := CAL_SCALE # calendar days per simulation day
+
+
+## Changes how fast dates and the visible time of day move, without the date jumping.
+func set_scale(new_scale: float) -> void:
+	new_scale = maxf(0.1, new_scale)
+	if absf(new_scale - scale) < 0.0001:
+		return
+	skip_days += t * (scale - new_scale)
+	scale = new_scale
 
 
 func advance(real_dt: float) -> void:
@@ -34,7 +44,7 @@ func hour() -> float:
 
 ## Calendar days elapsed (5x faster than simulation days, plus Monolith skips).
 func cal() -> float:
-	return t * CAL_SCALE + skip_days
+	return t * scale + skip_days
 
 
 func cal_day() -> int:

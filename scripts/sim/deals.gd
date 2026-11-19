@@ -37,9 +37,9 @@ static func make_alliance(sim: Sim, a: int, b: int) -> void:
 	ca.deals_made += 1
 	cb.deals_made += 1
 	if a == 0 or b == 0:
-		sim.emit_signal("event", "You are now allied with the %s. Each of you will defend the other, and your Billies may cross each other's land." % (cb.name if a == 0 else ca.name), "good")
+		sim.emit_signal("event", "You are now allied with the %s. Each of you will defend the other, and your Billies may cross each other's land." % (cb.name if a == 0 else ca.name), "major_good")
 	elif sim.have_met(0, a) or sim.have_met(0, b):
-		sim.emit_signal("event", "The %s and the %s have formed an alliance." % [ca.name, cb.name], "info")
+		sim.emit_signal("event", "The %s and the %s have formed an alliance." % [ca.name, cb.name], "major")
 
 
 static func break_alliance(sim: Sim, a: int, b: int) -> void:
@@ -48,7 +48,7 @@ static func break_alliance(sim: Sim, a: int, b: int) -> void:
 	var key := sim._key(a, b)
 	sim.relations[key] = sim.relation(a, b) - 25.0
 	if a == 0 or b == 0:
-		sim.emit_signal("event", "The alliance with the %s is over." % sim.civ(b if a == 0 else a).name, "warn")
+		sim.emit_signal("event", "The alliance with the %s is over." % sim.civ(b if a == 0 else a).name, "major_bad")
 
 
 ## Called when `attacker` declares war on `defender`: the defender's allies join in.
@@ -59,13 +59,13 @@ static func call_allies(sim: Sim, attacker: int, defender: int) -> void:
 		if allied(sim, ally.civ_id, attacker):
 			break_alliance(sim, ally.civ_id, attacker)     # can't stand on both sides
 		if ally.civ_id == 0:
-			sim.emit_signal("event", "Your ally the %s was attacked by the %s — you join the war at their side." % [sim.civ(defender).name, sim.civ(attacker).name], "warn")
+			sim.emit_signal("event", "Your ally the %s was attacked by the %s — you join the war at their side." % [sim.civ(defender).name, sim.civ(attacker).name], "major_bad")
 		elif defender == 0:
-			sim.emit_signal("event", "Your ally the %s join the war on your side!" % ally.name, "good")
+			sim.emit_signal("event", "Your ally the %s join the war on your side!" % ally.name, "major_good")
 		elif attacker == 0:
-			sim.emit_signal("event", "The %s honour their alliance with the %s and declare war on you!" % [ally.name, sim.civ(defender).name], "bad")
+			sim.emit_signal("event", "The %s honour their alliance with the %s and declare war on you!" % [ally.name, sim.civ(defender).name], "major_bad")
 		elif sim.have_met(0, ally.civ_id):
-			sim.emit_signal("event", "The %s join the war on the side of the %s." % [ally.name, sim.civ(defender).name], "warn")
+			sim.emit_signal("event", "The %s join the war on the side of the %s." % [ally.name, sim.civ(defender).name], "major")
 		sim.declare_war(ally.civ_id, attacker, true)
 
 
@@ -279,17 +279,12 @@ static func _apply(sim: Sim, o: Dictionary, to_player: bool) -> void:
 			if _cant_afford(sim, me, o) != "":
 				sim.emit_signal("event", "The trade with the %s fell through: %s" % [from.name, _cant_afford(sim, me, o)], "warn")
 				return
-			for k in (o["give"] as Dictionary).keys():
-				var n := from.take(k, float(o["give"][k]))
-				me.add(k, n)
-			for k in (o["want"] as Dictionary).keys():
-				from.add(k, me.take(k, float(o["want"][k])))
-			me.money -= int(o["talents"])
-			from.money += int(o["talents"])
+			# goods don't fly: your traders walk over with payment and bring the goods back
+			Trade.deal_order(sim, from.civ_id, o["give"], o["want"], int(o["talents"]))
 			sim.relations[key] = sim.relation(0, from.civ_id) + 4.0
-			me.deals_made += 1
 			from.deals_made += 1
-			sim.emit_signal("event", "Trade with the %s done: you got %s for %s." % [from.name, goods_text(o["give"], 0), goods_text(o["want"], int(o["talents"]))], "good")
+			var note := "" if not sim.colony.living().filter(func(q): return q.job == "trader").is_empty() else " Give someone the Trader job (Jobs panel) to carry it out."
+			sim.emit_signal("event", "Deal agreed with the %s: %s for %s. Your traders will carry it out.%s" % [from.name, goods_text(o["give"], 0), goods_text(o["want"], int(o["talents"])), note], "good")
 		"alliance":
 			make_alliance(sim, from.civ_id, 0)
 			if int(o.get("talents", 0)) > 0:

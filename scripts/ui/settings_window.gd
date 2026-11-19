@@ -1,16 +1,19 @@
 class_name SettingsWindow
 extends PanelContainer
-## Settings with three tabs: Audio (volumes), Game (day/night cycle, high-speed rendering) and
-## Accessibility (hide the day/night cycle when zoomed in). Changes apply at once and are saved.
+## Settings with four tabs: Audio (volumes), Game (calendar speed, day/night cycle, high-speed
+## rendering), Game Rules (every rule, editable before and during a game) and Accessibility
+## (hide the day/night cycle when zoomed in). Changes apply at once.
 
 signal closed
 
 var _zoom_label: Label
 var _speed_label: Label
+var _rule_values := {}
+var _rule_sliders := {}
 
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(620, 440)
+	custom_minimum_size = Vector2(760, 560)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
@@ -39,6 +42,9 @@ func _ready() -> void:
 
 	# --- game
 	var game := _tab(tabs, "Game")
+	game.add_child(_label("Time", 16, Color(1.0, 0.85, 0.5)))
+	_rule_row(game, Config.RULES[_rule_index("calendar_speed")])
+	game.add_child(_label("How fast dates, months, years and the clock move (5x = default). Walking and working speed don't change.", 12, Color(0.72, 0.7, 0.64)))
 	_check(game, "Show the day/night cycle", Settings.day_night, _set_prop.bind("day_night"))
 	_check(game, "Show FPS counter", Settings.show_fps, _set_prop.bind("show_fps"))
 	game.add_child(_label("Off: the world stays in daylight all the time (the clock still runs).", 12, Color(0.72, 0.7, 0.64)))
@@ -56,6 +62,28 @@ func _ready() -> void:
 	opt.item_selected.connect(_on_speed_opt.bind(opt))
 	sr.add_child(opt)
 	game.add_child(_label("At high speeds the game skips drawing every person and animal, which keeps the frame rate smooth.", 12, Color(0.72, 0.7, 0.64)))
+
+	# --- game rules
+	var rules := _tab(tabs, "Game Rules")
+	rules.add_child(_label("Every rule of the game. Changes take effect immediately, also in a game you're playing, and are saved with it.", 12, Color(0.72, 0.7, 0.64)))
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	rules.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
+	var group := ""
+	for r in Config.RULES:
+		if r[7] != group:
+			group = r[7]
+			list.add_child(_label(group, 16, Color(1.0, 0.85, 0.5)))
+		_rule_row(list, r)
+	var reset := Button.new()
+	reset.text = "Reset all rules to defaults"
+	reset.focus_mode = Control.FOCUS_NONE
+	reset.pressed.connect(_on_rules_reset)
+	rules.add_child(reset)
 
 	# --- accessibility
 	var acc := _tab(tabs, "Accessibility")
@@ -85,6 +113,81 @@ func _ready() -> void:
 	close.focus_mode = Control.FOCUS_NONE
 	close.pressed.connect(_on_close)
 	v.add_child(close)
+
+
+# ---------------------------------------------------------------- rules
+func _rule_index(key: String) -> int:
+	for i in Config.RULES.size():
+		if Config.RULES[i][0] == key:
+			return i
+	return 0
+
+
+func _rule_row(parent: Control, r: Array) -> void:
+	var row := HBoxContainer.new()
+	row.tooltip_text = r[8]
+	parent.add_child(row)
+	var nl := _label(r[1], 13)
+	nl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	nl.custom_minimum_size.x = 300
+	nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nl.tooltip_text = r[8]
+	nl.mouse_filter = Control.MOUSE_FILTER_STOP
+	row.add_child(nl)
+	var sl := HSlider.new()
+	sl.min_value = r[2]
+	sl.max_value = r[3]
+	sl.step = r[4]
+	sl.value = Config.rule(r[0])
+	sl.custom_minimum_size = Vector2(240, 22)
+	sl.focus_mode = Control.FOCUS_NONE
+	sl.tooltip_text = r[8]
+	row.add_child(sl)
+	var vl := _label("", 13, Color(0.6, 0.85, 1.0))
+	vl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	vl.custom_minimum_size.x = 70
+	row.add_child(vl)
+	if not _rule_values.has(r[0]):
+		_rule_values[r[0]] = []
+		_rule_sliders[r[0]] = []
+	_rule_values[r[0]].append(vl)
+	_rule_sliders[r[0]].append(sl)
+	sl.value_changed.connect(_on_rule.bind(r[0]))
+	_show_rule(r[0])
+
+
+func _on_rule(v: float, key: String) -> void:
+	Config.rules[key] = v
+	for s2 in _rule_sliders[key]:
+		(s2 as HSlider).set_value_no_signal(v)
+	_show_rule(key)
+
+
+func _show_rule(key: String) -> void:
+	var v := Config.rule(key)
+	var r: Array = Config.RULES[_rule_index(key)]
+	var text := ""
+	match r[6]:
+		"x":
+			text = "%.2fx" % v
+		"%":
+			text = "%d%%" % int(round(v * 100.0))
+		"b":
+			text = "On" if v >= 0.5 else "Off"
+		_:
+			text = ("%d" % int(v)) if absf(v - roundf(v)) < 0.01 else ("%.2f" % v)
+	var changed := absf(v - float(r[5])) > 0.001
+	for vl in _rule_values[key]:
+		(vl as Label).text = text
+		(vl as Label).add_theme_color_override("font_color", Color(1.0, 0.75, 0.35) if changed else Color(0.6, 0.85, 1.0))
+
+
+func _on_rules_reset() -> void:
+	Config.reset_rules()
+	for k in _rule_sliders.keys():
+		for s2 in _rule_sliders[k]:
+			(s2 as HSlider).set_value_no_signal(Config.rule(k))
+		_show_rule(k)
 
 
 func _set_prop(v: Variant, prop: String) -> void:

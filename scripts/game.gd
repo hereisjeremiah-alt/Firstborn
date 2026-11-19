@@ -12,6 +12,7 @@ var entities: EntityLayer
 var camera: CameraController
 var canvas_mod: CanvasModulate
 var hud: HUD
+var fog_sprite: Sprite2D
 var weather_overlay: WeatherOverlay
 var light_root: Node2D
 var lights := {}            # building id -> PointLight2D
@@ -50,6 +51,9 @@ var _args: PackedStringArray
 
 func _ready() -> void:
 	_args = OS.get_cmdline_user_args()
+	for a in _args:
+		if a.begins_with("--seed="):
+			Config.seed_value = int(a.substr(7))
 	var loading_layer := CanvasLayer.new()
 	add_child(loading_layer)
 	var lbl := Label.new()
@@ -104,6 +108,11 @@ func _build_scene(cam_data: Array) -> void:
 	entities = EntityLayer.new()
 	entities.game = self
 	add_child(entities)
+	fog_sprite = Sprite2D.new()
+	fog_sprite.centered = false
+	fog_sprite.scale = Vector2(T, T)
+	fog_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	add_child(fog_sprite)
 	canvas_mod = CanvasModulate.new()
 	add_child(canvas_mod)
 	camera = CameraController.new()
@@ -187,6 +196,9 @@ func _process(delta: float) -> void:
 	sim.active_rect = Rect2i(floori(view_rect.position.x / T) - 20, floori(view_rect.position.y / T) - 20,
 		ceili(view_rect.size.x / T) + 40, ceili(view_rect.size.y / T) + 40)
 	hover_tile = sim.world.tile_of(get_global_mouse_position())
+	var ft: Texture2D = sim.fog.texture if sim.fog.on else null
+	if fog_sprite.texture != ft:
+		fog_sprite.texture = ft
 	if build_mode != "":
 		var sz: Vector2i = Defs.BUILDINGS[build_mode]["size"]
 		place_tile = hover_tile - Vector2i(sz.x / 2, sz.y / 2)
@@ -515,7 +527,9 @@ func _apply_clear(r: Rect2, remove: bool) -> void:
 func _pick_flag(world_pos: Vector2) -> Colony:
 	var k := clampf(1.0 / camera.zoom.x, 0.45, 6.0)
 	for c in sim.colonies:
-		if c.collapsed:
+		if c.collapsed or c.bandit:
+			continue
+		if sim.fog.on and c.civ_id != 0 and not sim.fog.is_explored(c.home):
 			continue
 		var base := sim.world.center_of(c.home) + Vector2(-Defs.TILE * 1.5, -Defs.TILE)
 		var top := base + Vector2(0, -34.0 * k)
@@ -559,6 +573,10 @@ func _pick_ship(world_pos: Vector2) -> Ship:
 
 
 func _select_at(world_pos: Vector2, add: bool) -> void:
+	if sim.fog.on and not sim.fog.is_explored(sim.world.tile_of(world_pos)):
+		if not add:
+			clear_selection()
+		return
 	var fc := _pick_flag(world_pos)
 	if fc != null and not add:
 		clear_selection()
@@ -780,6 +798,118 @@ func _setup_wartest() -> void:
 				var k: String = sim._key(a.civ_id, b.civ_id)
 				sim.contacts[k] = true
 				sim.relations[k] = -70.0
+
+
+## Trade orders, bandits, splits, bridges, road blocking, calendar speed, fog: `-- --autotest --newtest`
+var _nt := {}
+func _new_test(i: int) -> void:
+	var c := sim.colony
+	var o: Colony = sim.colonies[1]
+	var bd := 1e9
+	for oc in sim.colonies:
+		if oc.civ_id != 0 and not oc.bandit and sim.land_reachable(c, oc) and Vector2(oc.home).distance_to(Vector2(c.home)) < bd:
+			bd = Vector2(oc.home).distance_to(Vector2(c.home))
+			o = oc
+	if i == 2:
+		c.money = 600.0
+		for k in ["wood", "stone", "sticks", "hides"]:
+			c.add(k, 200)
+		o.add("wood", 300)
+		o.add("crops", 200)
+		o.money = 500.0
+		for k in 6:
+			sim._make_human(o, "M" if k % 2 == 0 else "F", (8.0 + k * 6.0) * Defs.AGE_YEAR_DAYS, sim.world.center_of(o.home) + Vector2(k * 6, 4))
+		sim.contacts[sim._key(0, o.civ_id)] = true
+		sim.relations[sim._key(0, o.civ_id)] = 30.0
+		for oc in sim.colonies:
+			print("NT reach ", oc.name, " ", sim.land_reachable(c, oc), " home ", oc.home, " walk ", sim.world.walkable_near(oc.home, 4))
+		var tr: Human = c.living()[0]
+		tr.job = "trader"
+		tr.task = {}
+		var sale := Trade.people_for_sale(sim, o)
+		print("NT market: wood avail=", Trade.available(o, "wood"), " price=", Trade.buy_price(sim, o, "wood"), " stone sell=", Trade.sell_price(sim, o, "stone"), " people=", sale.map(func(q): return "%s(%d)" % [q.name, Trade.person_price(o, q)]), " cap=", Trade.capacity(c))
+		var err := Trade.place_order(sim, o.civ_id, {"wood": 40}, {"stone": 20}, [sale[0].id] if not sale.is_empty() else [])
+		print("NT order='", err, "' orders=", c.trade_orders.size(), " money=", int(c.money))
+		_nt["buy_person"] = sale[0].id if not sale.is_empty() else -1
+		_nt["wood0"] = c.count("wood")
+		# road blocking + bridge
+		var rt := road_tiles_between(sim.world.center_of(c.home + Vector2i(3, -6)), sim.world.center_of(c.home + Vector2i(3, 6)))
+		sim.plan_road(c, rt)
+		print("NT can build on planned road: '", sim.can_place(c, "campfire", rt[2]), "'")
+		var lake := Vector2i(-1, -1)
+		for r in range(3, 40):
+			for dx in range(-r, r + 1):
+				for dy in [-r, r]:
+					var q := c.home + Vector2i(dx, dy)
+					if lake.x < 0 and sim.world.bridgeable(q) and sim.world.walkable(q + Vector2i(-1, 0)):
+						lake = q
+		if lake.x >= 0:
+			var across := road_tiles_between(sim.world.center_of(lake + Vector2i(-1, 0)), sim.world.center_of(lake + Vector2i(4, 0)))
+			print("NT bridge planned ", sim.plan_road(c, across), " tiles at ", lake)
+			_nt["lake"] = lake
+		# calendar speed change keeps the date
+		var before := sim.time.cal()
+		Config.rules["calendar_speed"] = 10.0
+		sim.step(0.0)
+		print("NT calendar before %.3f after %.3f scale=%.1f" % [before, sim.time.cal(), sim.time.scale])
+		Config.rules["calendar_speed"] = 5.0
+		# fog
+		sim.fog.setup(sim.world, true)
+		sim.fog.reveal(c.home, Fog.START_R)
+		var n := 0
+		for b in sim.fog.explored:
+			n += b
+		print("NT fog explored tiles=", n, " home explored=", sim.fog.is_explored(c.home), " far=", sim.fog.is_explored(Vector2i(1, 1)))
+	if i == 4:
+		# bandits: a robbery and an ambush
+		var bc := Bandits.band(sim)
+		print("NT bandits: ", bc.name if bc != null else "none", " camps=", bc.buildings.size() if bc != null else 0, " people=", bc.population() if bc != null else 0, " at_war(0,band)=", sim.at_war(0, bc.civ_id) if bc != null else false)
+		if bc != null:
+			for k in 3:
+				sim._make_human(c, "M", 25.0 * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home))
+			var robber: Human = bc.living()[0]
+			robber.pos = sim.world.center_of(c.home) + Vector2(60, 0)
+			print("NT rob start=", Bandits.start_rob(sim, robber, c), " money before=", int(c.money))
+			_nt["robber"] = robber.id
+		# politics: force splits
+		o.approval = 5.0
+		o.defect_year = -1
+		for k in 4:
+			sim._make_human(o, "M" if k % 2 == 0 else "F", 30.0 * Defs.AGE_YEAR_DAYS, sim.world.center_of(o.home))
+		var before_n := sim.colonies.size()
+		Politics.split(sim, o)
+		print("NT AI split: colonies %d -> %d, asks=%d" % [before_n, sim.colonies.size(), sim.defect_asks.size()])
+		for k in 4:
+			sim._make_human(c, "M" if k % 2 == 0 else "F", 30.0 * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home))
+		c.approval = 5.0
+		var pop0 := c.population()
+		Politics.split(sim, c)
+		print("NT player split: pop %d -> %d, colonies=%d" % [pop0, c.population(), sim.colonies.size()])
+		print("NT approval parts: ", Politics.target(sim, c))
+	if i == 6:
+		var ok = save_slot(3)
+		var d := SaveSystem.load_data(3)
+		var s2 := Sim.new()
+		s2.from_dict(d)
+		var b2 := Bandits.band(s2)
+		print("NT roundtrip save=", ok, " colonies=", s2.colonies.size(), " fog_on=", s2.fog.on, " explored_same=", s2.fog.explored == sim.fog.explored,
+			" orders=", s2.colony.trade_orders.size(), " bandits=", b2.population() if b2 != null else -1, " roads=", s2.road_tiles.size(),
+			" bridges=", s2.road_tiles.keys().filter(func(k): return s2.world.road[int(k)] == 2).size(), " approval=", int(s2.colony.approval), " scale=", s2.time.scale)
+	if i >= 5 and i <= 60:
+		var tr: Human = null
+		for q in c.living():
+			if q.job == "trader":
+				tr = q
+		var od := "none" if c.trade_orders.is_empty() else Trade.describe(sim, c.trade_orders[0])
+		var bp := sim.person(int(_nt.get("buy_person", -1)))
+		var rob := sim.person(int(_nt.get("robber", -1)))
+		var trs := c.people.filter(func(q): return q.job == "trader" or q.task_memory.has("order"))
+		if not trs.is_empty():
+			var t0: Human = trs[0]
+			print("   NT trader %s alive=%s job=%s carry=%s money=%d mem=%s" % [t0.name, t0.alive, t0.job, t0.carrying, int(t0.task_memory.get("trade_money", 0)), t0.task_memory.keys()])
+		print("NT t%d trader=%s order=%s money=%d wood=+%d bought=%s robber=%s roads=%d bridges=%d" % [i, tr.state if tr != null else "-", od, int(c.money),
+			int(c.count("wood") - float(_nt["wood0"])), (sim.col_of(bp).name if bp != null else "-"), (rob.state if rob != null and rob.alive else "-"),
+			sim.road_tiles.size(), sim.road_tiles.keys().filter(func(k): return sim.world.road[int(k)] == 2).size()])
 
 
 ## Soldiers, roads, zones, election influence, deals and milestones: `-- --autotest --dealtest`
@@ -1076,6 +1206,8 @@ func _autotest() -> void:
 			_civ_test(i)
 		if _args.has("--dealtest"):
 			_deal_test(i)
+		if _args.has("--newtest"):
+			_new_test(i)
 		if _args.has("--raidtest") and i == 2:
 			_raid_setup()
 		if _args.has("--raidtest") and i > 2:
@@ -1441,6 +1573,95 @@ func _military_shots(dir: String) -> void:
 		hud._refresh_info()
 		await _snap(dir + "/23_diplomacy_actions.png", 1.5)
 		clear_selection()
+	# --- trade window
+	var tp: Colony = null
+	for oc in sim.colonies:
+		if oc.civ_id != 0 and not oc.bandit and not oc.collapsed:
+			tp = oc
+			break
+	if tp != null:
+		sim.contacts[sim._key(0, tp.civ_id)] = true
+		if sim.at_war(0, tp.civ_id):
+			sim.make_peace(0, tp.civ_id)
+		sim.relations[sim._key(0, tp.civ_id)] = 25.0
+		tp.add("wood", 120)
+		tp.add("crops", 90)
+		tp.add("copper_ore", 30)
+		for k in 6:
+			sim._make_human(tp, "M" if k % 2 == 0 else "F", (9.0 + k * 6.0) * Defs.AGE_YEAR_DAYS, sim.world.center_of(tp.home))
+		sim._reach_cache["%d,%d>%d,%d" % [c.home.x, c.home.y, tp.home.x, tp.home.y]] = true
+		hud.open_trade(tp.civ_id)
+		(hud.trade_spins["buy:wood"] as SpinBox).value = 40
+		if hud.trade_spins.has("sell:stone"):
+			(hud.trade_spins["sell:stone"] as SpinBox).value = 25
+		for pid in hud.trade_people.keys():
+			(hud.trade_people[pid] as CheckBox).button_pressed = true
+			break
+		await _snap(dir + "/24_trade_window.png", 2.0)
+		hud.close_panel()
+	# --- monolith, bridge, bandit camp, announcements
+	c.researched["standing_stones"] = true
+	var ms := CivAI.find_site(sim, c, "monolith")
+	var mono := sim.place_building(c, "monolith", ms)
+	if mono != null:
+		sim.finish_building(mono)
+		camera.position = mono.center()
+		await _snap(dir + "/25_monolith.png", 3.5)
+	var lake := Vector2i(-1, -1)
+	for r in range(3, 60):
+		for dx in range(-r, r + 1):
+			for dy in [-r, r]:
+				var q := c.home + Vector2i(dx, dy)
+				if lake.x < 0 and sim.world.bridgeable(q) and sim.world.walkable(q + Vector2i(-1, 0)):
+					lake = q
+	if lake.x >= 0:
+		for q in road_tiles_between(sim.world.center_of(lake + Vector2i(-4, 0)), sim.world.center_of(lake + Vector2i(6, 0))):
+			if sim.road_ok(q):
+				var bi := sim.world.idx(q)
+				if not sim.world.bridgeable(q):
+					sim.world.res_type[bi] = Defs.R.NONE
+					_on_tile_changed(q)
+				sim.lay_road(c, bi)
+		camera.position = sim.world.center_of(lake + Vector2i(1, 0))
+		await _snap(dir + "/26_bridge.png", 3.0)
+	var band := Bandits.band(sim)
+	if band != null:
+		for b in band.buildings:
+			if b.type == "bandit_camp":
+				camera.position = b.center()
+				selected_building_id = b.id
+				hud._refresh_info()
+				break
+		hud.push_event("Bandits raided your stores and got away with 31 Talents, 12 Animal Hides!", "major_bad")
+		hud.push_event("Election day! The tribe votes for a new Chief.", "major")
+		await _snap(dir + "/27_bandit_camp.png", 3.0)
+		clear_selection()
+	# --- settings: game rules tab
+	hud._open_settings()
+	var sw := hud.settings_layer.find_children("*", "TabContainer", true, false)
+	if not sw.is_empty():
+		(sw[0] as TabContainer).current_tab = 1
+		await _snap(dir + "/28_settings_game.png", 1.5)
+		hud._open_settings()
+		await get_tree().process_frame
+		var sw2 := hud.settings_layer.find_children("*", "TabContainer", true, false)
+		for t2 in sw2:
+			if is_instance_valid(t2) and not t2.is_queued_for_deletion():
+				(t2 as TabContainer).current_tab = 2
+		await _snap(dir + "/29_settings_rules.png", 1.5)
+	hud.close_panel()
+	# --- fog of war
+	sim.fog.setup(sim.world, true)
+	sim.fog.reveal(c.home, Fog.START_R + 6)
+	for p in c.living():
+		sim.fog.reveal(sim.world.tile_of(p.pos), Fog.PEOPLE_R)
+	sim.fog.texture.update(sim.fog.image)
+	camera.position = sim.world.center_of(c.home)
+	await _snap(dir + "/30_fog.png", 0.8)
+	hud.toggle_worldmap()
+	await _snap(dir + "/31_fog_worldmap.png", 1.0)
+	hud.toggle_worldmap()
+	sim.fog.setup(sim.world, false)
 	await _snap(dir + "/17_far_names.png", 0.45)
 
 

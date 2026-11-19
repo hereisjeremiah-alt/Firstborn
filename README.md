@@ -195,6 +195,52 @@ The renderer is set to *Compatibility* so it runs on almost any GPU.
 - Laborers and builders lay planned roads (trees in the way are cleared first). Billies walk about twice as fast on roads,
   and pathfinding prefers them.
 
+**Trading (rewritten)**
+- Click another tribe's flag → **Trade** (next to "Go to their camp"). The window lists what they'll sell (price,
+  how many they can spare), what they'll buy from you, and up to three **people** they'll part with (a man, a woman,
+  a child; they need at least 6 people and decent relations). Pick amounts and press **Send trader**.
+- Nothing moves by magic: a Billy with the **Trader** job walks over carrying your goods and the Talents to pay,
+  makes the exchange, and walks back with the purchases. Bought people walk to your village on their own.
+  A trader carries 30 per trip (10 Talents count as 1); research **Trade Wagons** (Stone Age, Tools) to carry 120.
+  Big orders take several trips. Open orders are listed in the window and can be cancelled.
+- With an open order and auto-jobs on, someone always takes up the Trader job.
+- Accepted envoy trades also become orders your traders carry out.
+
+**Bandits**
+- At the start of a game a few outlaw camps (Game Rules: "Bandit camps", default 3) appear in the wilds, at least
+  40 tiles from any tribe. All bandits form one outlaw band: at war with everyone, outside diplomacy and territory.
+- Every week or so a camp sends two robbers to a nearby village (4+ people) to steal Talents and goods from the stores,
+  then they run back. A robbed village is left alone for about 6 days.
+- They ambush traders of any tribe who pass within 14 tiles of a camp and steal what they carry (then let them go).
+- They only fight when attacked. Camps slowly recruit (up to 5 each). Select a camp → "Send soldiers to destroy it"
+  to recover a share of their stash.
+
+**Political happiness (Mood)**
+- Every tribe, from the Caveman Age: 0–100%, shown in the top bar and the Colony panel with what makes it up:
+  government type (Democracy +10 … Tyranny −15; tribal rule +5 before the Bronze Age), the leader's mandate,
+  food, homes, sickness, wars, prosperity, a stolen election, bandit raids, and rising expectations in later ages.
+- Below 20% there's a 40% chance each calendar year (both adjustable in Game Rules) that a quarter of the adults
+  (with their young children) leave. Half the time they ask to join the friendliest tribe — if that's you, you get a
+  card to welcome or refuse them; if refused they may not join or cross into that land — otherwise, or if refused,
+  they found a new tribe in free land nearby, taking a share of the stores.
+
+**Bridges** — the road tool lays a bridge across lakes and rivers (3 wood per tile, built plank by plank from the
+shore). Bridges can connect lands that couldn't be reached on foot.
+
+**No building on roads** — buildings can't be placed on roads or planned roads (a gate can; the automatic wall
+builder puts a gate where a road crosses the wall line).
+
+**Big announcements** — wars, peace, alliances, captured land, new ages, leaders dying, election day, election
+results, people leaving, bandit raids and ambushes appear in large banners at the top of the screen.
+
+**Settings** (main menu and in-game): a **Game Rules** tab with every rule, editable mid-game; and on the Game tab,
+**Calendar speed** — how fast dates and the clock move (5x by default; changing it never makes the date jump).
+
+**Fog of war** (world creation option) — only the land around your camp is known at first; your Billies and
+buildings uncover the map (main view, minimap and World Map). Saved with the game.
+
+**Monolith** — now has a model: a tall black standing stone with glowing year marks on a ring of stones.
+
 **Milestones (G)** — 27 goals in five groups (Survival, Growth, Knowledge, Diplomacy, War), each with a reward in
 Talents, KP or RP: first fire, first child, 10/25/50 people, roads, zoned buildings, 25 techs, each new age, a Monolith,
 first contact, 500 Talents, 5 deals, an alliance, 3 elections, a Capitol, 5 Warriors + 3 Archers, first blood, 6 states, a ship…
@@ -347,6 +393,10 @@ scripts/
   sim/military.gd       training and hiring Warriors and Archers
   sim/deals.gd          trade offers, alliances, tribute and land demands, counter-offers
   sim/milestones.gd     the 27 milestones and their rewards
+  sim/trade.gd          the player's trade orders and the trader's trips
+  sim/bandits.gd        outlaw camps, robberies and ambushes
+  sim/politics.gd       political happiness, splits and new tribes
+  sim/fog.gd            fog of war
   render/terrain_view.gd    crisp pixel-art ground (terrain.gdshader: dithered tile edges, zoom-adaptive pixel size) + seasonal snow
   render/resource_layer.gd  chunked resource drawing (only changed chunks redraw)
   render/entity_layer.gd    people, animals, buildings, selection, build ghost

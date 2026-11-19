@@ -126,6 +126,9 @@ func _draw() -> void:
 	var sm: StateMap = sim.states
 	var big := size.x >= 300.0
 	var k := r.size.x / float(sim.world.w * Defs.TILE)
+	var fog: Fog = sim.fog
+	if fog.on:
+		draw_texture_rect(fog.texture, r, false)
 	if territory_mode and big:
 		var kk := r.size.x / float(sim.world.w)
 		var sfs := int(clampf(9.0 + (map_zoom - 1.0) * 1.5, 9.0, 15.0))
@@ -134,7 +137,7 @@ func _draw() -> void:
 			if int(sm.owners[st]) < 0 and st != game.selected_state and map_zoom < 2.5:
 				continue
 			var cp: Vector2 = r.position + (Vector2(sm.centers[st]) + Vector2(0.5, 0.5)) * kk
-			if not Rect2(Vector2.ZERO, size).has_point(cp):
+			if not Rect2(Vector2.ZERO, size).has_point(cp) or not fog.is_explored(sm.centers[st]):
 				continue
 			# the tribe's own name already sits over its home state
 			var home_here := false
@@ -149,17 +152,31 @@ func _draw() -> void:
 		draw_rect(Rect2(r.position + bb.position * k, bb.size * k), Color(1, 1, 1, 0.9), false, 1.5)
 	if show_animals:
 		for a in sim.animals:
-			if a.alive:
+			if a.alive and (not fog.on or fog.is_explored(sim.world.tile_of(a.pos))):
 				draw_rect(Rect2(r.position + a.pos * k, Vector2(1, 1)), Color(0.9, 0.2, 0.2) if a.def()["predator"] else Color(0.9, 0.85, 0.6))
 	for c in sim.colonies:
 		if c.collapsed:
 			continue
 		var hc: Vector2 = r.position + sim.world.center_of(c.home) * k
 		for b in c.buildings:
+			if fog.on and not fog.is_explored(b.center_tile()):
+				continue
 			draw_rect(Rect2(r.position + b.center() * k - Vector2(1.5, 1.5), Vector2(3, 3)), c.color.darkened(0.2))
 		for p in c.people:
-			if p.alive:
+			if p.alive and (not fog.on or c.civ_id == 0 or fog.is_explored(sim.world.tile_of(p.pos))):
 				draw_circle(r.position + p.pos * k, 2.4 if big else 1.5, c.color.lightened(0.3))
+		if fog.on and c.civ_id != 0 and not fog.is_explored(c.home):
+			continue
+		if c.bandit:
+			# outlaw camps: a small black banner, no tribe name
+			for b in c.buildings:
+				if b.type == "bandit_camp" and fog.is_explored(b.center_tile()):
+					var bc: Vector2 = r.position + b.center() * k
+					draw_rect(Rect2(bc + Vector2(-3, -9), Vector2(7, 5)), Color(0.05, 0.05, 0.05))
+					draw_line(bc + Vector2(-3, -9), bc, Color(0.3, 0.2, 0.1), 1.2)
+					if big:
+						_label_at(bc + Vector2(0, 12), "Bandits", 11, Color(0.9, 0.55, 0.5), 3)
+			continue
 		# tribe flag
 		var fk := 1.4 if big else 0.8
 		var top := hc + Vector2(-4, -16) * fk

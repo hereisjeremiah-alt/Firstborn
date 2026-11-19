@@ -109,7 +109,7 @@ static func balanced_kind(c: Colony) -> String:
 static func ai_hire(sim: Sim, c: Colony) -> void:
 	if not c.has_built("mercenary_hall") or sim.rng.randf() > 0.1:
 		return
-	var threatened := not sim.enemies_of(c.civ_id).is_empty()
+	var threatened := not sim.enemies_of(c.civ_id).is_empty() or c.recent_robbed > 0.0
 	var kind := balanced_kind(c)
 	if c.money >= hire_cost(c, kind) * (1.5 if threatened else 4.0) and c.soldiers().size() < c.population() / 2:
 		hire(sim, c, kind)

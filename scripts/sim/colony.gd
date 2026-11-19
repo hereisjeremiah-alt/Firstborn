@@ -24,6 +24,13 @@ var wall_tier := 0           # fortification level the walls are built at
 var weapon_orders: Array = []   # player-queued weapons for the blacksmith
 var era_start_year := 0.0    # calendar year (fractional) this tribe entered its current age
 var bonus_years := 0.0       # years banked with a Monolith toward the next age
+var bandit := false          # an outlaw band (Bandits): not a tribe, at war with everyone
+var approval := 60.0         # political happiness 0..100 (Politics)
+var approval_parts := {}     # what makes up the target approval (for the Colony panel)
+var rob_msg_t := -10.0
+var recent_robbed := 0.0     # days the tribe remembers being robbed by bandits
+var defect_year := 0         # calendar year of the last defection check
+var trade_orders: Array = [] # the player's trade orders, carried out by traders (Trade)
 var zones := {}              # tile index -> zone (Defs.ZONES)
 var road_marks := {}         # tile index -> true: roads the player has laid out, still to be built
 var backed_id := -1          # the candidate the player backs at the next election
@@ -73,6 +80,11 @@ func _init() -> void:
 func register(p: Human) -> void:
 	people.append(p)
 	_by_id[p.id] = p
+
+
+func unregister(p: Human) -> void:
+	people.erase(p)
+	_by_id.erase(p.id)
 
 
 func person(pid: int) -> Human:
@@ -558,7 +570,8 @@ func to_dict() -> Dictionary:
 		"next_election": next_election, "last_election": last_election.duplicate(true),
 		"zones_i": zones.keys(), "zones_v": zones.values(), "roads": road_marks.keys(), "backed": backed_id,
 		"campaign": campaign.duplicate(), "rigged": rigged, "unrest": unrest_until, "milestones": milestones.duplicate(),
-		"enemy_kills": enemy_kills, "deals": deals_made, "elections_held": elections_held}
+		"enemy_kills": enemy_kills, "deals": deals_made, "elections_held": elections_held,
+		"bandit": bandit, "approval": approval, "defect_year": defect_year, "trade_orders": trade_orders.duplicate(true)}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -631,6 +644,11 @@ func from_dict(d: Dictionary) -> void:
 	enemy_kills = int(d.get("enemy_kills", 0))
 	deals_made = int(d.get("deals", 0))
 	elections_held = int(d.get("elections_held", 0))
+	bandit = bool(d.get("bandit", false))
+	approval = float(d.get("approval", 60.0))
+	defect_year = int(d.get("defect_year", 0))
+	trade_orders = d.get("trade_orders", [])
+	Trade.load_orders(self)
 	trade_log = d.get("trade_log", [])
 	invalidate_bonus()
 	is_player = bool(d.get("player", civ_id == 0))

@@ -54,12 +54,15 @@ static func _update(sim: Sim, p: Human, dt: float) -> void:
 
 
 static func _check_interrupts(sim: Sim, p: Human) -> void:
+	if p.job == "bandit":
+		Bandits.interrupts(sim, p)
+		return
 	var cur := int(p.task.get("prio", 0))
 	if p.task.get("type", "") == "voyage" and p.thirst > 5.0 and p.hunger > 5.0:
 		return                    # at sea: nothing to do but wait for landfall
 	if cur == PRIO_ORDER and p.health > 25.0:
 		return                    # following orders: stay on task unless badly hurt
-	if not sim.enemies_of(p.civ_id).is_empty() and p.can_work():
+	if not sim.enemies_of(p.civ_id, true).is_empty() and p.can_work():
 		var foe := _nearby_enemy(sim, p, 9.0)
 		if foe != null:
 			if p.job == "soldier" and p.health > 30.0 and cur < PRIO_DEFEND and str(p.task.get("type", "")) != "attack":
@@ -93,6 +96,9 @@ static func _check_interrupts(sim: Sim, p: Human) -> void:
 
 
 static func _choose_task(sim: Sim, p: Human) -> void:
+	if p.job == "bandit":
+		Bandits.plan(sim, p)
+		return
 	var a := p.age_years()
 	if a < 3.0:
 		_task_follow_parent(sim, p)
@@ -243,7 +249,7 @@ static func _go(sim: Sim, p: Human, dest: Vector2i) -> bool:
 ## stop at a border, and neither do the player's own direct orders.
 static func _needs_passage(p: Human) -> bool:
 	var ty := str(p.task.get("type", ""))
-	if ty in ["attack", "raid", "flee", "board"]:
+	if ty in ["attack", "raid", "flee", "board", "rob", "bandit_home"] or p.job == "bandit":
 		return false
 	var prio := int(p.task.get("prio", 0))
 	if ty == "claim":
@@ -410,6 +416,10 @@ static func _run(sim: Sim, p: Human, dt: float) -> void:
 			_do_clear(sim, p, dt)
 		"road":
 			_do_road(sim, p, dt)
+		"rob":
+			Bandits.do_rob(sim, p)
+		"bandit_home":
+			Bandits.do_home(sim, p)
 		"forge":
 			_do_forge(sim, p, dt)
 		"train":
@@ -752,6 +762,8 @@ static func _start_haul(sim: Sim, p: Human) -> void:
 
 
 static func _do_haul(sim: Sim, p: Human) -> void:
+	if p.job == "trader":
+		Trade.bank(sim, p)
 	for k in p.carrying.keys():
 		var amt := float(p.carrying[k])
 		if k == "water":
@@ -1294,6 +1306,17 @@ static func _do_study(sim: Sim, p: Human, dt: float) -> void:
 ## home needs (ores for research, food in hard times), then carry the purchases home.
 static func _plan_trade(sim: Sim, p: Human) -> bool:
 	var c := sim.col_of(p)
+	if c.is_player:
+		# the player's traders carry out trade orders (Trade)
+		if p.task_memory.has("order") and p.task_memory.has("trade_civ"):
+			var po := sim.civ(int(p.task_memory["trade_civ"]))
+			if po != null and not po.collapsed and sim.time.t < float(p.task_memory.get("trade_until", 0.0)) and _start_trade_trip(sim, p, c, po):
+				return true
+			Trade._unpack(sim, p, c)
+			return false
+		if not p.carrying.is_empty() or float(p.task_memory.get("trade_money", 0.0)) > 0.0:
+			return _set_task(sim, p, "haul", c.drop_point(p.pos), PRIO_JOB, {"label": "Bringing goods and Talents home"})
+		return Trade.plan_trip(sim, p)
 	if not p.carrying.is_empty():
 		# interrupted on the way (a drink, a rest): pick the trip up again
 		var mem_civ := int(p.task_memory.get("trade_civ", -1))
@@ -1358,7 +1381,7 @@ static func _plan_trade(sim: Sim, p: Human) -> bool:
 
 
 static func _on_trade_trip(p: Human) -> bool:
-	return p.job == "trader" and p.task_memory.has("trade_civ") and not p.carrying.is_empty()
+	return p.job == "trader" and p.task_memory.has("trade_civ") and (not p.carrying.is_empty() or float(p.task_memory.get("trade_money", 0.0)) > 0.0)
 
 
 static func _start_trade_trip(sim: Sim, p: Human, c: Colony, best: Colony) -> bool:
@@ -1385,6 +1408,14 @@ static func _do_trade(sim: Sim, p: Human) -> void:
 		p.task = t
 		p.state = str(t["label"])
 		return
+	if c.is_player and p.task_memory.has("order"):
+		p.task_memory.erase("trade_civ")
+		if other != null and not other.collapsed:
+			Trade.exchange(sim, p, c, other)
+			p.gain_skill("trader", 0.05)
+		_done(sim, p)
+		_set_task(sim, p, "haul", c.drop_point(p.pos), PRIO_JOB, {"label": "Bringing the trade home"})
+		return
 	var bought := {}
 	p.task_memory.erase("trade_civ")
 	if other != null and not other.collapsed:
@@ -1405,7 +1436,11 @@ static func _do_voyage(sim: Sim, p: Human, dt: float) -> void:
 	var c := sim.col_of(p)
 	if t["phase"] == "out":
 		var other := sim.civ(int(t["civ"]))
-		if other != null and not other.collapsed:
+		if c.is_player and p.task_memory.has("order"):
+			if other != null and not other.collapsed:
+				Trade.exchange(sim, p, c, other)
+			p.task_memory.erase("trade_civ")
+		elif other != null and not other.collapsed:
 			var bought := sim.do_trade(p, c, other)
 			p.gain_skill("trader", 0.05)
 			for k in bought.keys():
@@ -1536,25 +1571,41 @@ static func _plan_road(sim: Sim, p: Human) -> bool:
 	var c := sim.col_of(p)
 	var here := sim.world.tile_of(p.pos)
 	var best := Vector2i(-1, -1)
+	var best_stand := Vector2i(-1, -1)
 	var best_d := 1e18
 	var drop: Array = []
+	var wood_ok := c.count("wood") >= Defs.BRIDGE_WOOD
 	for i in c.road_marks.keys():
 		var ii := int(i)
 		var q := Vector2i(ii % sim.world.w, ii / sim.world.w)
-		if sim.world.road[ii] == 1 or sim.building_tiles.has(ii):
+		if sim.world.road[ii] != 0 or sim.building_tiles.has(ii):
 			drop.append(i)
 			continue
 		if sim.world.res_type[ii] != Defs.R.NONE or sim.claims.has(ii):
 			continue          # still to be cleared, or someone is on it
+		var stand := q
+		if sim.world.bridgeable(q):
+			# bridges are built plank by plank from the shore (or from the bridge so far)
+			if not wood_ok:
+				continue
+			stand = Vector2i(-1, -1)
+			for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				if sim.world.walkable(q + dd):
+					stand = q + dd
+					break
+			if stand.x < 0:
+				continue
 		var d := Vector2(q).distance_squared_to(Vector2(here))
 		if d < best_d:
 			best_d = d
 			best = q
+			best_stand = stand
 	for i in drop:
 		c.road_marks.erase(i)
 	if best.x < 0:
 		return false
-	if _set_task(sim, p, "road", best, PRIO_JOB + 2, {"tile": best, "label": "Laying a road"}):
+	var bridge := sim.world.bridgeable(best)
+	if _set_task(sim, p, "road", best_stand, PRIO_JOB + 2, {"tile": best, "label": "Building a bridge" if bridge else "Laying a road"}):
 		sim.claim(best, p.id)
 		return true
 	return false
@@ -1569,9 +1620,16 @@ static func _do_road(sim: Sim, p: Human, dt: float) -> void:
 		sim.claims.erase(i)
 		_done(sim, p)
 		return
+	var bridge := sim.world.bridgeable(tile)
 	t["work"] = float(t["work"]) + dt * _wm(sim, p, "builder")
-	if float(t["work"]) < 4.0:
+	if float(t["work"]) < (9.0 if bridge else 4.0):
 		return
+	if bridge:
+		if c.count("wood") < Defs.BRIDGE_WOOD:
+			sim.claims.erase(i)
+			_done(sim, p)
+			return
+		c.take("wood", Defs.BRIDGE_WOOD)
 	sim.lay_road(c, i)
 	sim.claims.erase(i)
 	p.gain_skill("builder", 0.01)
@@ -2035,7 +2093,7 @@ static func _nearest_of(sim: Sim, p: Human, c: Colony, r_tiles: float) -> Human:
 static func _nearby_enemy(sim: Sim, p: Human, r_tiles: float) -> Human:
 	var best: Human = null
 	var best_d := pow(r_tiles * Defs.TILE, 2)
-	for ec in sim.enemies_of(p.civ_id):
+	for ec in sim.enemies_of(p.civ_id, true):
 		var q := _nearest_of(sim, p, ec, r_tiles)
 		if q != null and q.pos.distance_squared_to(p.pos) < best_d:
 			best_d = q.pos.distance_squared_to(p.pos)
@@ -2053,6 +2111,8 @@ static func hit_human(sim: Sim, attacker: Human, victim: Human, dmg: float) -> v
 	var sty := Fx.style_of(attacker)
 	Fx.hit(sim, victim.pos, attacker.pos, dmg, sty[0], true, sty[1])
 	Fx.hurt(victim, attacker.pos)
+	if attacker.job == "bandit" and victim.health > 0.0:
+		Bandits.on_hit(sim, attacker, victim)
 	if sim.rng.randf() < 0.015:
 		Survival.infect(sim, victim, "tetanus", "a wound")
 	elif sim.rng.randf() < 0.15:

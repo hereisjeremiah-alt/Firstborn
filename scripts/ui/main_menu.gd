@@ -167,6 +167,13 @@ func _page_new() -> Control:
 	tribes_spin.value = Config.ai_tribes
 	trow.add_child(tribes_spin)
 
+	var fog_check := CheckButton.new()
+	fog_check.text = "Fog of war (the map starts hidden)"
+	fog_check.button_pressed = Config.fog_of_war
+	fog_check.focus_mode = Control.FOCUS_NONE
+	fog_check.tooltip_text = "Only the land around your camp is known at first. Your Billies uncover the rest as they explore."
+	fog_check.toggled.connect(func(on): Config.fog_of_war = on)
+	left.add_child(fog_check)
 	left.add_child(HSeparator.new())
 	var custom := HBoxContainer.new()
 	custom.add_theme_constant_override("separation", 6)

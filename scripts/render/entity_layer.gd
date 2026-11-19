@@ -116,6 +116,62 @@ func _draw() -> void:
 	_draw_orders(zoom)
 
 
+# ------------------------------------------------------------------ monolith & bandit camp
+## A tall black standing stone on a worn stone platform, ringed by four small stones.
+## Glowing carvings pulse slowly: the Monolith counts the years.
+func _monolith(o: Vector2, s: Vector2, built: bool, m: Color) -> void:
+	var c := o + s * 0.5
+	# worn platform and a ring of small stones
+	draw_circle(c + Vector2(0, 2), s.x * 0.46, Color(0.50, 0.47, 0.42) * m)
+	draw_circle(c + Vector2(0, 2), s.x * 0.38, Color(0.58, 0.55, 0.50) * m)
+	for k in 4:
+		var a := PI * 0.25 + k * PI * 0.5
+		var sp := c + Vector2.from_angle(a) * s.x * 0.40 + Vector2(0, 2)
+		draw_rect(Rect2(sp - Vector2(1.8, 3.0), Vector2(3.6, 5.0)), Color(0.40, 0.38, 0.36) * m)
+		draw_rect(Rect2(sp - Vector2(1.8, 3.0), Vector2(3.6, 1.2)), Color(0.55, 0.53, 0.50) * m)
+	# long shadow
+	draw_colored_polygon(PackedVector2Array([c + Vector2(-4, 6), c + Vector2(4, 6), c + Vector2(13, 12), c + Vector2(5, 12)]), Color(0, 0, 0, 0.25 * m.a))
+	if not built:
+		draw_rect(Rect2(c + Vector2(-4, -6), Vector2(8, 12)), Color(0.20, 0.19, 0.22) * m)
+		return
+	# the slab: tall, slightly tapered, dark
+	var slab := PackedVector2Array([c + Vector2(-5, 6), c + Vector2(5, 6), c + Vector2(4, -20), c + Vector2(-4, -20)])
+	draw_colored_polygon(slab, Color(0.10, 0.10, 0.13) * m)
+	draw_colored_polygon(PackedVector2Array([c + Vector2(-4, -20), c + Vector2(4, -20), c + Vector2(3, -22), c + Vector2(-3, -22)]), Color(0.22, 0.22, 0.27) * m)
+	draw_line(c + Vector2(-4, -20), c + Vector2(-5, 6), Color(0.26, 0.26, 0.32) * m, 1.0)
+	# glowing year marks
+	var pulse := 0.55 + 0.45 * sin(Time.get_ticks_msec() / 900.0)
+	var glow := Color(0.45, 0.85, 1.0, (0.55 + 0.4 * pulse) * m.a)
+	for k in 5:
+		var y := -16.0 + k * 4.2
+		draw_line(c + Vector2(-2.2, y), c + Vector2(2.2, y), glow, 1.0)
+	draw_circle(c + Vector2(0, -18.5), 1.2, glow)
+	draw_circle(c + Vector2(0, -18.5), 3.5, Color(0.45, 0.85, 1.0, 0.12 * pulse * m.a))
+
+
+## A ragged outlaw camp: two patched tents, a fire, a stash of stolen goods and a black banner.
+func _bandit_camp(o: Vector2, s: Vector2, m: Color) -> void:
+	var c := o + s * 0.5
+	draw_circle(c, s.x * 0.47, Color(0.40, 0.33, 0.24, 0.55) * m)
+	for k in 2:
+		var tp := o + Vector2(6 + k * (s.x - 20), 6)
+		draw_colored_polygon(PackedVector2Array([tp + Vector2(0, 14), tp + Vector2(7, 0), tp + Vector2(14, 14)]), Color(0.45, 0.38, 0.30) * m)
+		draw_colored_polygon(PackedVector2Array([tp + Vector2(7, 0), tp + Vector2(14, 14), tp + Vector2(8, 14)]), Color(0.36, 0.30, 0.24) * m)
+		draw_rect(Rect2(tp + Vector2(3, 8), Vector2(3, 3)), Color(0.55, 0.35, 0.25) * m)    # patch
+	_campfire(c + Vector2(-8, 4), 0, true, m)
+	# stash: sacks and a chest
+	draw_circle(c + Vector2(10, 10), 3.0, Color(0.70, 0.60, 0.40) * m)
+	draw_circle(c + Vector2(14, 11), 2.6, Color(0.65, 0.55, 0.36) * m)
+	draw_rect(Rect2(c + Vector2(4, 12), Vector2(6, 4)), Color(0.45, 0.30, 0.15) * m)
+	draw_rect(Rect2(c + Vector2(6, 13), Vector2(2, 1)), Color(0.9, 0.75, 0.3) * m)
+	# black banner with a white skull mark
+	var pole := o + Vector2(s.x - 6, 2)
+	draw_line(pole, pole + Vector2(0, 18), Color(0.3, 0.22, 0.12) * m, 1.4)
+	draw_rect(Rect2(pole + Vector2(-9, 0), Vector2(9, 6)), Color(0.08, 0.08, 0.08) * m)
+	draw_circle(pole + Vector2(-4.5, 2.6), 1.6, Color(0.9, 0.9, 0.85) * m)
+	draw_rect(Rect2(pole + Vector2(-5.5, 3.6), Vector2(2.0, 1.2)), Color(0.9, 0.9, 0.85) * m)
+
+
 # ------------------------------------------------------------------ town plan: roads and zones
 const ROAD_COL := Color(0.62, 0.50, 0.34)
 const ROAD_EDGE := Color(0.45, 0.35, 0.22)
@@ -142,7 +198,7 @@ func _draw_town_plan(sim: Sim, view: Rect2, zoom: float) -> void:
 					var a := tp + Vector2(T, T) * 0.5 + Vector2(d) * T * 0.5
 					var o := Vector2(d.y, d.x) * T * 0.5
 					draw_line(a - o, a + o, Color(zc, 0.85), 1.0)
-	# finished roads: packed earth with darker verges, joined to their neighbours
+	# finished roads: packed earth with darker verges, joined to their neighbours; bridges are planks with rails
 	for i in sim.road_tiles.keys():
 		var ii := int(i)
 		var q := Vector2i(ii % w, ii / w)
@@ -150,20 +206,37 @@ func _draw_town_plan(sim: Sim, view: Rect2, zoom: float) -> void:
 		if not view.has_point(tp):
 			continue
 		var c := tp + Vector2(T, T) * 0.5
+		var bridge := sim.world.road[ii] == 2
 		var col := ROAD_COL if sim.world.snowy[ii] == 0 else ROAD_COL.lerp(Color(0.9, 0.9, 0.92), 0.5)
-		draw_rect(Rect2(c - Vector2(5, 5), Vector2(10, 10)), ROAD_EDGE)
+		var edge := ROAD_EDGE
+		if bridge:
+			col = Color(0.60, 0.44, 0.26)
+			edge = Color(0.36, 0.24, 0.12)
+		var links: Array = []
 		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 			var nb = q + d
-			if sim.world.inb(nb) and sim.world.road[nb.y * w + nb.x] == 1:
-				var r := Rect2(c - Vector2(5, 5), Vector2(10, 10)).merge(Rect2(c + Vector2(d) * T * 0.5 - Vector2(5, 5), Vector2(10, 10)))
-				draw_rect(r, ROAD_EDGE)
-		draw_rect(Rect2(c - Vector2(4, 4), Vector2(8, 8)), col)
-		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			var nb = q + d
-			if sim.world.inb(nb) and sim.world.road[nb.y * w + nb.x] == 1:
-				var r2 := Rect2(c - Vector2(4, 4), Vector2(8, 8)).merge(Rect2(c + Vector2(d) * T * 0.5 - Vector2(4, 4), Vector2(8, 8)))
-				draw_rect(r2, col)
-		if zoom >= 1.5:
+			if sim.world.inb(nb) and sim.world.road[nb.y * w + nb.x] != 0:
+				links.append(d)
+		var hw := 6.0 if bridge else 5.0
+		draw_rect(Rect2(c - Vector2(hw, hw), Vector2(hw, hw) * 2.0), edge)
+		for d in links:
+			draw_rect(Rect2(c - Vector2(hw, hw), Vector2(hw, hw) * 2.0).merge(Rect2(c + Vector2(d) * T * 0.5 - Vector2(hw, hw), Vector2(hw, hw) * 2.0)), edge)
+		draw_rect(Rect2(c - Vector2(hw - 1, hw - 1), Vector2(hw - 1, hw - 1) * 2.0), col)
+		for d in links:
+			draw_rect(Rect2(c - Vector2(hw - 1, hw - 1), Vector2(hw - 1, hw - 1) * 2.0).merge(Rect2(c + Vector2(d) * T * 0.5 - Vector2(hw - 1, hw - 1), Vector2(hw - 1, hw - 1) * 2.0)), col)
+		if bridge:
+			# planks across the direction of travel, and posts at the corners
+			var along_x := links.has(Vector2i(1, 0)) or links.has(Vector2i(-1, 0))
+			for k in 4:
+				var off := -6.0 + k * 4.0
+				if along_x:
+					draw_line(c + Vector2(off, -5), c + Vector2(off, 5), edge, 0.8)
+				else:
+					draw_line(c + Vector2(-5, off), c + Vector2(5, off), edge, 0.8)
+			for cx in [-1.0, 1.0]:
+				for cy in [-1.0, 1.0]:
+					draw_rect(Rect2(c + Vector2(cx * 6.0, cy * 6.0) - Vector2(1, 1), Vector2(2, 2)), Color(0.30, 0.20, 0.10))
+		elif zoom >= 1.5:
 			draw_rect(Rect2(c + Vector2(float(ii % 3) - 2.0, float(ii % 5) - 2.0), Vector2(1, 1)), col.darkened(0.2))
 	# planned roads: dashed outlines
 	for i in sim.colony.road_marks.keys():
@@ -565,7 +638,7 @@ const SHADOW_HEIGHT := {"campfire": 0.0, "fence": 3.0, "wall": 7.0, "gate": 8.0,
 	"capitol": 20.0, "map_table": 3.0, "arrow_tower": 24.0, "farm": 0.0, "bedding": 2.0, "drying_rack": 5.0,
 	"research_table": 3.0, "well": 3.0, "shelter": 10.0, "stone_hut": 10.0, "house": 14.0, "stone_house": 16.0,
 	"storage": 8.0, "granary": 12.0, "workshop": 12.0, "healer_hut": 10.0, "mine": 8.0, "hunting_camp": 9.0,
-	"watchtower": 22.0, "harbor": 6.0}
+	"watchtower": 22.0, "harbor": 6.0, "monolith": 0.0, "mercenary_hall": 12.0, "bandit_camp": 0.0}
 const ROOFS := [Color(0.72, 0.62, 0.34), Color(0.66, 0.58, 0.30), Color(0.45, 0.30, 0.18), Color(0.70, 0.30, 0.22)]
 
 
@@ -588,6 +661,10 @@ func _draw_building(sim: Sim, b: Building) -> void:
 		elif b.type != "fence":
 			_shadow(o + Vector2(1, 1), s - Vector2(2, 2), height * (1.0 + b.tier * 0.5))
 	match b.type:
+		"monolith":
+			_monolith(o, s, b.built, m)
+		"bandit_camp":
+			_bandit_camp(o, s, m)
 		"campfire":
 			_campfire(o + Vector2(8, 8), era, b.is_lit(), m)
 		"shelter":
@@ -1124,7 +1201,7 @@ func _draw_markers(sim: Sim, view: Rect2, zoom: float, fast := false) -> void:
 		if game.selected_ids.has(p.id) or p.id == game.selected_human_id:
 			draw_arc(at, r + 3.0 * k, 0, TAU, 16, Color(1, 1, 1), 1.5 * k)
 	for c in sim.colonies:
-		if c.collapsed:
+		if c.collapsed or c.bandit:
 			continue
 		var base := sim.world.center_of(c.home) + Vector2(-Defs.TILE * 1.5, -Defs.TILE)
 		if view.grow(80.0 * k).has_point(base):
