@@ -56,6 +56,9 @@ var defect_asks: Array = []     # groups from other tribes asking to join the pl
 var alliances := {}             # "a:b" -> calendar year the alliance was made
 var deal_offers: Array = []     # offers from AI tribes waiting for the player (Deals)
 var next_deal_id := 1
+var play_secs := 0.0            # real seconds played while unpaused (diplomacy waits)
+var diplo_cd := {}              # "a>b:kind" -> play_secs when that request may be made again
+var stumps := {}                # tile index -> [tree type, sim day felled]: trees that will grow back
 var road_tiles := {}            # tile index -> true: every finished road (for drawing)
 var fx: Array = []              # combat visuals waiting to be drawn (see Fx)
 var fx_on := false              # set by the game while people are drawn
@@ -189,13 +192,24 @@ func _found_colony(civ_id: int, home: Vector2i) -> Colony:
 		k += 1
 		if k >= n:
 			break
-		var f := _make_human(c, "F", rng.randf_range(17.0, 23.0) * Defs.AGE_YEAR_DAYS, base + off + Vector2(6, 0))
+		var f := _make_human(c, "F", rng.randf_range(18.0, 23.0) * Defs.AGE_YEAR_DAYS, base + off + Vector2(6, 0))
 		f.job = jobs[k % jobs.size()]
 		f.skills = {"gatherer": 2.0, "healer": 1.0}
 		m.partner_id = f.id
 		f.partner_id = m.id
 		k += 1
 	return c
+
+
+func _announce_techs() -> void:
+	for id in colony.just_researched:
+		var td: Dictionary = Defs.TECHS[id]
+		var extra := ""
+		var unl: Array = td.get("unlocks", [])
+		if not unl.is_empty():
+			extra = " Unlocks: %s." % ", ".join(PackedStringArray(unl.map(func(b): return str(Defs.BUILDINGS[b]["name"]))))
+		emit_signal("event", "New technology: %s!%s" % [td["name"], extra], "major_good")
+	colony.just_researched.clear()
 
 
 ## A new AI tribe founded mid-game (a breakaway group) at `home`, with no people yet.
@@ -410,6 +424,8 @@ func is_cold_season_tile(i: int) -> bool:
 # ================================================================ main step
 func step(dt: float) -> void:
 	fog.update(self, dt)
+	if not colony.just_researched.is_empty():
+		_announce_techs()
 	var want_scale := Config.rule("calendar_speed")
 	if absf(want_scale - time.scale) > 0.0001:
 		time.set_scale(want_scale)
@@ -537,6 +553,7 @@ func _daily() -> void:
 		c.money += Config.rule("shell_income") * c.population()
 	_drift_relations()
 	_regrow(season)
+	_regrow_trees(season)
 	AnimalAI.daily(self)
 
 
@@ -774,9 +791,42 @@ func deplete_unit(t: Vector2i) -> void:
 	if world.res_amount[i] <= 0:
 		var r := world.res_type[i]
 		if not Defs.RES[r]["regrow"]:
+			note_stump(i, r)
 			world.res_type[i] = Defs.R.NONE
 			paths.refresh_tile(t)
 		emit_signal("tile_changed", t)
+
+
+## A tree was cut down here: it will grow back in time, unless something is built on the spot.
+func note_stump(i: int, r: int) -> void:
+	if r in Defs.TREES:
+		stumps[i] = [r, time.day()]
+
+
+## Daily in spring and summer: felled trees grow back where the ground is still free.
+func _regrow_trees(season: int) -> void:
+	if stumps.is_empty() or (season != 0 and season != 1):
+		return
+	var need := Config.rule("tree_regrow_days")
+	for i in stumps.keys():
+		var e: Array = stumps[i]
+		var ii := int(i)
+		# a structure or road on the spot: the tree is gone for good
+		if building_tiles.has(ii) or world.road[ii] != 0:
+			stumps.erase(i)
+			continue
+		if world.res_type[ii] != Defs.R.NONE:
+			stumps.erase(i)
+			continue
+		if float(time.day() - int(e[1])) < need or _road_planned(ii) or claims.has(ii) or rng.randf() > 0.35:
+			continue
+		var r := int(e[0])
+		world.res_type[ii] = r
+		world.res_amount[ii] = int(Defs.RES[r]["amount"])
+		var q := Vector2i(ii % world.w, ii / world.w)
+		paths.refresh_tile(q)
+		emit_signal("tile_changed", q)
+		stumps.erase(i)
 
 
 func claim(t: Vector2i, pid: int) -> void:
@@ -1255,6 +1305,11 @@ func peace_chance(a: int, b: int) -> float:
 
 
 func offer_peace(a: int, b: int) -> bool:
+	if Deals.wait_left(self, a, b, "peace") > 0.0:
+		if a == 0:
+			emit_signal("event", "You must wait %s before offering peace to the %s again." % [Deals.wait_text(self, a, b, "peace"), civ(b).name], "warn")
+		return false
+	Deals.start_wait(self, a, b, "peace")
 	if rng.randf() < peace_chance(a, b):
 		make_peace(a, b)
 		return true
@@ -1590,7 +1645,7 @@ func to_dict() -> Dictionary:
 		"next_id": next_id, "next_animal_id": next_animal_id, "next_bid": next_bid,
 		"ships": ships.map(func(sh): return sh.to_dict()), "next_ship_id": next_ship_id,
 		"used_names": used_names.keys(), "rng": rng.state, "last_day": _last_day,
-		"defect_asks": defect_asks.duplicate(true), "borders": Borders.to_dict(self), "roads": road_tiles.keys(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
+		"defect_asks": defect_asks.duplicate(true), "borders": Borders.to_dict(self), "play_secs": play_secs, "diplo_cd": diplo_cd.duplicate(), "roads": road_tiles.keys(), "stumps_i": stumps.keys(), "stumps_v": stumps.values(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
 	}
 
 
@@ -1668,6 +1723,13 @@ func from_dict(d: Dictionary) -> void:
 	for c in colonies:
 		refresh_zones(c)
 	fog.from_save(world, d.get("fog", {}))
+	play_secs = float(d.get("play_secs", 0.0))
+	diplo_cd = d.get("diplo_cd", {})
+	stumps.clear()
+	var si: Array = d.get("stumps_i", [])
+	var sv: Array = d.get("stumps_v", [])
+	for k in si.size():
+		stumps[int(si[k])] = sv[k]
 	paths = Pathfinder.new()
 	paths.setup(world)
 	_setup_sea()

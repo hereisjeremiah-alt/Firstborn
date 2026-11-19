@@ -212,6 +212,7 @@ func _process(delta: float) -> void:
 				turbo = float(a.substr(8))
 		var total := minf(delta, 0.1) * speed * turbo
 		if total > 0.0:
+			sim.play_secs += minf(delta, 0.1) * turbo        # real play time (diplomacy waits)
 			var steps := ceili(total / MAX_STEP)
 			var dt := total / steps
 			for i in steps:
@@ -220,7 +221,7 @@ func _process(delta: float) -> void:
 	if sim.time.season() != _season_shown:
 		_on_season_visual()
 	# day/night: hidden (constant daylight) when switched off or when zoomed in close
-	var want := 0.0 if Settings.hide_day_night(camera.zoom.x) else 1.0
+	var want := 0.0 if Settings.hide_day_night(camera.zoom.x, speed) else 1.0
 	_light_mix = move_toward(_light_mix, want, delta * 2.0)
 	canvas_mod.color = Color(1, 1, 1).lerp(sim.time.light_color(), _light_mix)
 	# resource sprites fade out when zoomed far out so the map stays readable
@@ -800,6 +801,54 @@ func _setup_wartest() -> void:
 				sim.relations[k] = -70.0
 
 
+func lbp_clear(c: Colony) -> void:
+	for q in c.living():
+		q.carrying.erase("log")
+
+
+## Lumber yard, lumberers, regrowing trees, waits, tech announcements: `-- --autotest --lumbertest`
+func _lumber_test(i: int) -> void:
+	var c := sim.colony
+	if i == 2:
+		Config.rules["tree_regrow_days"] = 3.0
+		c.researched["lumbering"] = true
+		c.add("wood", 100)
+		c.add("stone", 50)
+		var site := CivAI.find_site(sim, c, "lumber_yard")
+		var y := sim.place_building(c, "lumber_yard", site)
+		sim.finish_building(y)
+		c.auto_jobs = false
+		var lb: Human = c.living()[0]
+		lb.job = "lumberer"
+		lb.task = {}
+		_nt["sticks0"] = c.count("sticks")
+		print("LT yard at ", site, " lumberer=", lb.name, " allowed=", c.job_allowed("lumberer"))
+		# a road and a building on stumps: those trees must not come back
+		var tt := sim.world.find_resource(c.home + Vector2i(6, 6), 30, {Defs.R.TREE: true, Defs.R.PINE: true}, sim.claims)
+		if tt.x >= 0:
+			var ti := sim.world.idx(tt)
+			sim.note_stump(ti, sim.world.res_type[ti])
+			sim.world.res_type[ti] = Defs.R.NONE
+			sim.world.road[ti] = 1
+			sim.road_tiles[ti] = true
+			_nt["road_stump"] = ti
+		# waits
+		print("LT wait before=", Deals.wait_left(sim, 0, 1, "alliance"), " propose=", Deals.player_propose(sim, 1, "alliance"), " second='", Deals.player_propose(sim, 1, "alliance"), "' left=", int(Deals.wait_left(sim, 0, 1, "alliance")))
+		# tech announcement
+		c.research_points = 999
+		for id in Defs.techs_of_era(0):
+			if c.tech_available(id) and c.can_afford_tech(id):
+				c.research(id)
+				break
+	if i >= 3 and i <= 25 and i % 2 == 1:
+		var lb: Human = null
+		for q in c.living():
+			if q.job == "lumberer":
+				lb = q
+		print("LT t%d lumberer=%s carry=%s sticks=+%d stumps=%d logs=%d road_stump_back=%s" % [i, lb.state if lb != null else "-", lb.carrying if lb != null else {}, int(c.count("sticks") - float(_nt["sticks0"])),
+			sim.stumps.size(), int(c.count("log")), str(sim.world.res_type[int(_nt.get("road_stump", 0))] != Defs.R.NONE)])
+
+
 ## Trade orders, bandits, splits, bridges, road blocking, calendar speed, fog: `-- --autotest --newtest`
 var _nt := {}
 func _new_test(i: int) -> void:
@@ -1208,6 +1257,8 @@ func _autotest() -> void:
 			_deal_test(i)
 		if _args.has("--newtest"):
 			_new_test(i)
+		if _args.has("--lumbertest"):
+			_lumber_test(i)
 		if _args.has("--raidtest") and i == 2:
 			_raid_setup()
 		if _args.has("--raidtest") and i > 2:
@@ -1606,7 +1657,37 @@ func _military_shots(dir: String) -> void:
 	if mono != null:
 		sim.finish_building(mono)
 		camera.position = mono.center()
-		await _snap(dir + "/25_monolith.png", 3.5)
+		c.researched["lumbering"] = true
+		var lsite := CivAI.find_site(sim, c, "lumber_yard")
+		for rr in range(4, 40):
+			if lsite.x >= 0:
+				break
+			for dx in range(-rr, rr + 1):
+				var cand := c.home + Vector2i(dx, rr)
+				if sim.can_place(c, "lumber_yard", cand) == "":
+					lsite = cand
+					break
+		var ly := sim.place_building(c, "lumber_yard", lsite)
+		if ly != null:
+			sim.finish_building(ly)
+			var lbp: Human = c.living()[0]
+			lbp.pos = ly.center() + Vector2(0, 26)
+			lbp.carrying = {"log": 1}
+			lbp.task = {}
+			camera.position = ly.center()
+			await _snap(dir + "/25b_lumber_yard.png", 3.5)
+			camera.position = mono.center()
+		await _snap(dir + "/25_monolith.png", 3.0)
+		lbp_clear(c)
+	# --- jobs window and the save page
+	c.auto_jobs = false
+	hud.toggle_jobs_window()
+	await _snap(dir + "/32_jobs.png", 2.0)
+	hud.close_panel()
+	hud.toggle_pause_menu()
+	hud._fill_pause_menu("", "save")
+	await _snap(dir + "/33_saves.png", 2.0)
+	hud.toggle_pause_menu()
 	var lake := Vector2i(-1, -1)
 	for r in range(3, 60):
 		for dx in range(-r, r + 1):

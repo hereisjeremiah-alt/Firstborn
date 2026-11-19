@@ -65,7 +65,8 @@ func _bus(name: String, v: float) -> void:
 
 
 ## True if the day/night lighting should be frozen at daylight right now.
-func hide_day_night(zoom: float) -> bool:
-	if not day_night:
+## Steady daylight when the cycle is off, at 8x speed or faster (any zoom), or when zoomed in close.
+func hide_day_night(zoom: float, speed := 1.0) -> bool:
+	if not day_night or speed >= 8.0:
 		return true
 	return freeze_zoomed and zoom * 100.0 > freeze_zoom_pct

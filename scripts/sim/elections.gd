@@ -162,6 +162,7 @@ static func _install(sim: Sim, c: Colony, winner: Human, title: String, now: flo
 	text = text[0].to_upper() + text.substr(1)
 	if c.civ_id == 0:
 		sim.emit_signal("event", text, "major_good")
+		Sound.play_jingle("fanfare")
 	elif sim.have_met(0, c.civ_id) and title == "President":
 		sim.emit_signal("event", "%s is the new President of the %s." % [winner.name, c.name], "major")
 

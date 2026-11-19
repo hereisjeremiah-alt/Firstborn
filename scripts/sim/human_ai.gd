@@ -177,6 +177,8 @@ static func _plan_job(sim: Sim, p: Human, job: String) -> bool:
 			return _plan_gather(sim, p)
 		"woodcutter":
 			return _plan_harvest(sim, p, Defs.TREES, "woodcutter")
+		"lumberer":
+			return _plan_lumber(sim, p) or _plan_labor(sim, p)
 		"miner":
 			var need := sim.col_of(p).ore_needed()
 			if not need.is_empty():
@@ -416,6 +418,10 @@ static func _run(sim: Sim, p: Human, dt: float) -> void:
 			_do_clear(sim, p, dt)
 		"road":
 			_do_road(sim, p, dt)
+		"fell":
+			_do_fell(sim, p, dt)
+		"saw":
+			_do_saw(sim, p, dt)
 		"rob":
 			Bandits.do_rob(sim, p)
 		"bandit_home":
@@ -1541,6 +1547,7 @@ static func _do_clear(sim: Sim, p: Human, dt: float) -> void:
 	var n := clampi(w.res_amount[i], 1, 4)
 	if not (r >= Defs.R.COPPER_ORE and r <= Defs.R.IRON_ORE):
 		p.add_carry(str(rd["item"]), n)
+	sim.note_stump(i, r)
 	w.res_type[i] = Defs.R.NONE
 	w.res_amount[i] = 0
 	sim.paths.refresh_tile(tile)
@@ -1563,6 +1570,88 @@ static func _after_clear(sim: Sim, p: Human) -> void:
 			_start_haul(sim, p)
 		else:
 			_done(sim, p)
+
+
+# ================================================================ lumber
+const LOG_STICKS := 14
+
+
+## Lumberers fell a whole tree, drag the log to the Lumber Yard and cut it into sticks.
+static func _plan_lumber(sim: Sim, p: Human) -> bool:
+	var c := sim.col_of(p)
+	var yard := c.nearest_building(p.pos, "lumber_yard")
+	if yard == null or not yard.built:
+		return false
+	var at_yard := sim.world.walkable_near(yard.center_tile() + Vector2i(0, 2), 3)
+	if at_yard.x < 0:
+		return false
+	if int(p.carrying.get("log", 0)) > 0:
+		return _set_task(sim, p, "saw", at_yard, PRIO_JOB, {"bid": yard.id, "label": "Dragging a log to the lumber yard"})
+	if c.count("log") >= 1.0:
+		if _set_task(sim, p, "saw", at_yard, PRIO_JOB, {"bid": yard.id, "from_stock": true, "label": "Fetching a log from the pile"}):
+			return true
+	var types := {}
+	for r in Defs.TREES:
+		types[r] = true
+	var tile := sim.world.find_resource(yard.center_tile(), Defs.HOME_RADIUS, types, sim.claims)
+	if tile.x < 0:
+		return false
+	if _set_task(sim, p, "fell", tile, PRIO_JOB, {"tile": tile, "label": "Felling a tree"}):
+		sim.claim(tile, p.id)
+		return true
+	return false
+
+
+static func _do_fell(sim: Sim, p: Human, dt: float) -> void:
+	var t := p.task
+	var tile: Vector2i = t["tile"]
+	var w := sim.world
+	var i := w.idx(tile)
+	var r := w.res_type[i]
+	if not (r in Defs.TREES):
+		sim.claims.erase(i)
+		_done(sim, p)
+		return
+	t["work"] = float(t["work"]) + dt * _wm(sim, p, "lumberer")
+	t["label"] = "Felling a tree"
+	if float(t["work"]) < float(Defs.RES[r]["work"]) * 4.0:
+		return
+	# the whole tree comes down
+	sim.note_stump(i, r)
+	w.res_type[i] = Defs.R.NONE
+	w.res_amount[i] = 0
+	sim.paths.refresh_tile(tile)
+	sim.emit_signal("tile_changed", tile)
+	sim.claims.erase(i)
+	p.add_carry("log", 1)
+	p.gain_skill("lumberer", 0.05)
+	Fx.smash(sim, w.center_of(tile), p.pos)
+	_done(sim, p)
+	_plan_lumber(sim, p)
+
+
+static func _do_saw(sim: Sim, p: Human, dt: float) -> void:
+	var t := p.task
+	var c := sim.col_of(p)
+	if t.get("from_stock", false) and int(p.carrying.get("log", 0)) <= 0:
+		if c.take("log", 1.0) < 1.0:
+			_done(sim, p)
+			return
+		p.add_carry("log", 1)
+		t["from_stock"] = false
+	if int(p.carrying.get("log", 0)) <= 0:
+		_done(sim, p)
+		return
+	t["label"] = "Cutting a log into sticks"
+	t["work"] = float(t["work"]) + dt * _wm(sim, p, "lumberer")
+	if float(t["work"]) < 6.0:
+		return
+	p.carrying["log"] = int(p.carrying["log"]) - 1
+	if int(p.carrying["log"]) <= 0:
+		p.carrying.erase("log")
+	c.deposit("sticks", LOG_STICKS)
+	p.gain_skill("lumberer", 0.03)
+	_done(sim, p)
 
 
 # ================================================================ roads

@@ -182,6 +182,9 @@ func _page_new() -> Control:
 		var b := _button(e[0], show_page.bind(e[1]))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		custom.add_child(b)
+	var rr2 := _button("Randomize all rule sliders", _on_rules_random_new)
+	rr2.tooltip_text = "Every Game Rules slider gets a random (but playable) value. Open Game Rules to see or tweak them."
+	left.add_child(rr2)
 	left.add_child(_label("After the world is made you choose where your tribe begins.", 12, Color(0.72, 0.7, 0.64)))
 	left.add_child(_button("Preview world", _on_preview))
 	var start := _button("Start New Game", _on_start)
@@ -300,6 +303,7 @@ func _page_rules() -> Control:
 	var bh := HBoxContainer.new()
 	v.add_child(bh)
 	bh.add_child(_button("Reset to defaults", _on_rules_reset))
+	bh.add_child(_button("Randomize", _on_rules_random))
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bh.add_child(sp)
@@ -328,6 +332,18 @@ func _show_rule(key: String) -> void:
 				rules_values[key].text = ("%d" % int(v)) if absf(v - roundf(v)) < 0.01 else ("%.2f" % v)
 		var changed := absf(v - float(r[5])) > 0.001
 		rules_values[key].add_theme_color_override("font_color", Color(1.0, 0.75, 0.35) if changed else Color(0.6, 0.85, 1.0))
+
+
+func _on_rules_random_new() -> void:
+	Config.randomize_rules()
+	preview_label.text = "Game rules randomized! Open Game Rules… to see them."
+
+
+func _on_rules_random() -> void:
+	Config.randomize_rules()
+	for k in rules_sliders.keys():
+		rules_sliders[k].set_value_no_signal(Config.rule(k))
+		_show_rule(k)
 
 
 func _on_rules_reset() -> void:

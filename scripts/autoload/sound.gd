@@ -43,7 +43,7 @@ func _ready() -> void:
 		s.bus = SFX_BUS
 		add_child(s)
 		_sfx_players.append(s)
-	for k in ["click", "toggle", "hover", "confirm"]:
+	for k in ["click", "toggle", "hover", "confirm", "fanfare"]:
 		var path := "res://audio/sfx/%s.wav" % k
 		if ResourceLoader.exists(path):
 			_sfx[k] = load(path)
@@ -120,6 +120,19 @@ func play(name: String) -> void:
 		if not sp.playing:
 			sp.stream = _sfx[name]
 			sp.pitch_scale = randf_range(0.97, 1.03)
+			sp.play()
+			return
+
+
+## A musical sting (e.g. the fanfare for a new leader): plays even with click sounds off.
+func play_jingle(name: String) -> void:
+	if not _sfx.has(name):
+		return
+	for s in _sfx_players:
+		var sp: AudioStreamPlayer = s
+		if not sp.playing:
+			sp.stream = _sfx[name]
+			sp.pitch_scale = 1.0
 			sp.play()
 			return
 

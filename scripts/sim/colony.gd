@@ -28,6 +28,7 @@ var bandit := false          # an outlaw band (Bandits): not a tribe, at war wit
 var approval := 60.0         # political happiness 0..100 (Politics)
 var approval_parts := {}     # what makes up the target approval (for the Colony panel)
 var rob_msg_t := -10.0
+var just_researched: Array = []   # techs the player unlocked since the last announcement
 var recent_robbed := 0.0     # days the tribe remembers being robbed by bandits
 var defect_year := 0         # calendar year of the last defection check
 var trade_orders: Array = [] # the player's trade orders, carried out by traders (Trade)
@@ -403,6 +404,8 @@ func research(id: String) -> bool:
 		take(k, float(mats[k]))
 	researched[id] = true
 	invalidate_bonus()
+	if is_player:
+		just_researched.append(id)
 	return true
 
 

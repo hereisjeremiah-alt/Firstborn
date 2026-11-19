@@ -117,36 +117,78 @@ func _draw() -> void:
 
 
 # ------------------------------------------------------------------ monolith & bandit camp
-## A tall black standing stone on a worn stone platform, ringed by four small stones.
-## Glowing carvings pulse slowly: the Monolith counts the years.
+## A tall rough standing stone of grey granite on a trampled patch, with a few smaller stones
+## around it. Carved notches on its face count the years.
 func _monolith(o: Vector2, s: Vector2, built: bool, m: Color) -> void:
 	var c := o + s * 0.5
-	# worn platform and a ring of small stones
-	draw_circle(c + Vector2(0, 2), s.x * 0.46, Color(0.50, 0.47, 0.42) * m)
-	draw_circle(c + Vector2(0, 2), s.x * 0.38, Color(0.58, 0.55, 0.50) * m)
-	for k in 4:
-		var a := PI * 0.25 + k * PI * 0.5
-		var sp := c + Vector2.from_angle(a) * s.x * 0.40 + Vector2(0, 2)
-		draw_rect(Rect2(sp - Vector2(1.8, 3.0), Vector2(3.6, 5.0)), Color(0.40, 0.38, 0.36) * m)
-		draw_rect(Rect2(sp - Vector2(1.8, 3.0), Vector2(3.6, 1.2)), Color(0.55, 0.53, 0.50) * m)
-	# long shadow
-	draw_colored_polygon(PackedVector2Array([c + Vector2(-4, 6), c + Vector2(4, 6), c + Vector2(13, 12), c + Vector2(5, 12)]), Color(0, 0, 0, 0.25 * m.a))
+	# trampled earth and a ring of small stones
+	draw_circle(c + Vector2(0, 3), s.x * 0.45, Color(0.48, 0.42, 0.32, 0.55) * m)
+	for k in 6:
+		var a := k * TAU / 6.0 + 0.3
+		var sp := c + Vector2.from_angle(a) * s.x * 0.38 + Vector2(0, 3)
+		draw_circle(sp, 2.3, Color(0.42, 0.41, 0.39) * m)
+		draw_circle(sp + Vector2(-0.6, -0.8), 1.2, Color(0.58, 0.57, 0.54) * m)
+	# shadow cast to the side
+	draw_colored_polygon(PackedVector2Array([c + Vector2(-5, 6), c + Vector2(5, 6), c + Vector2(15, 11), c + Vector2(6, 12)]), Color(0, 0, 0, 0.28 * m.a))
 	if not built:
-		draw_rect(Rect2(c + Vector2(-4, -6), Vector2(8, 12)), Color(0.20, 0.19, 0.22) * m)
+		draw_colored_polygon(PackedVector2Array([c + Vector2(-6, 6), c + Vector2(6, 6), c + Vector2(4, -4), c + Vector2(-5, -3)]), Color(0.50, 0.49, 0.46) * m)
 		return
-	# the slab: tall, slightly tapered, dark
-	var slab := PackedVector2Array([c + Vector2(-5, 6), c + Vector2(5, 6), c + Vector2(4, -20), c + Vector2(-4, -20)])
-	draw_colored_polygon(slab, Color(0.10, 0.10, 0.13) * m)
-	draw_colored_polygon(PackedVector2Array([c + Vector2(-4, -20), c + Vector2(4, -20), c + Vector2(3, -22), c + Vector2(-3, -22)]), Color(0.22, 0.22, 0.27) * m)
-	draw_line(c + Vector2(-4, -20), c + Vector2(-5, 6), Color(0.26, 0.26, 0.32) * m, 1.0)
-	# glowing year marks
-	var pulse := 0.55 + 0.45 * sin(Time.get_ticks_msec() / 900.0)
-	var glow := Color(0.45, 0.85, 1.0, (0.55 + 0.4 * pulse) * m.a)
-	for k in 5:
-		var y := -16.0 + k * 4.2
-		draw_line(c + Vector2(-2.2, y), c + Vector2(2.2, y), glow, 1.0)
-	draw_circle(c + Vector2(0, -18.5), 1.2, glow)
-	draw_circle(c + Vector2(0, -18.5), 3.5, Color(0.45, 0.85, 1.0, 0.12 * pulse * m.a))
+	# the stone: rough, uneven outline, lit from the left
+	var base_col := Color(0.52, 0.51, 0.48) * m
+	var dark := Color(0.38, 0.37, 0.35) * m
+	var light := Color(0.66, 0.65, 0.61) * m
+	var outline := PackedVector2Array([c + Vector2(-6, 6), c + Vector2(6, 6), c + Vector2(5.5, -6), c + Vector2(4, -15),
+		c + Vector2(2, -20), c + Vector2(-2.5, -21), c + Vector2(-5, -16), c + Vector2(-6.5, -5)])
+	draw_colored_polygon(outline, base_col)
+	# shaded right side and lit left edge
+	draw_colored_polygon(PackedVector2Array([c + Vector2(1.5, 6), c + Vector2(6, 6), c + Vector2(5.5, -6), c + Vector2(4, -15), c + Vector2(2, -20), c + Vector2(1, -12)]), dark)
+	draw_line(c + Vector2(-6.5, -5), c + Vector2(-5, -16), light, 1.2)
+	draw_line(c + Vector2(-5, -16), c + Vector2(-2.5, -21), light, 1.0)
+	# cracks, lichen and carved year notches
+	draw_line(c + Vector2(-3, -8), c + Vector2(-1, -4), dark, 0.8)
+	draw_line(c + Vector2(-1, -4), c + Vector2(-2, 1), dark, 0.6)
+	draw_circle(c + Vector2(-4, 2), 1.3, Color(0.55, 0.60, 0.40, 0.8) * m)
+	draw_circle(c + Vector2(3, -10), 1.0, Color(0.55, 0.60, 0.40, 0.7) * m)
+	for k in 4:
+		var y := -17.0 + k * 3.0
+		draw_line(c + Vector2(-3, y), c + Vector2(0.5, y + 0.4), Color(0.30, 0.29, 0.27) * m, 0.8)
+	draw_polyline(outline + PackedVector2Array([outline[0]]), Color(0.25, 0.24, 0.23) * m, 0.8)
+
+
+## Lumber yard: a stack of logs, a sawhorse with a log on it, a chopping block and bundles of sticks.
+func _lumber_yard(o: Vector2, s: Vector2, m: Color) -> void:
+	draw_rect(Rect2(o + Vector2(1, 1), s - Vector2(2, 2)), Color(0.55, 0.45, 0.32, 0.6) * m)
+	# sawdust
+	for k in 7:
+		draw_circle(o + Vector2(10 + (k * 7) % 28, 18 + (k * 5) % 10), 1.4, Color(0.85, 0.72, 0.48, 0.7) * m)
+	# log stack (ends facing us)
+	var ls := o + Vector2(4, 4)
+	for row in 3:
+		for k in 4 - row:
+			var lc := ls + Vector2(5 + k * 6 + row * 3, 13 - row * 5)
+			draw_circle(lc, 3.0, Color(0.42, 0.27, 0.14) * m)
+			draw_circle(lc, 2.1, Color(0.80, 0.64, 0.40) * m)
+			draw_circle(lc, 0.7, Color(0.62, 0.46, 0.26) * m)
+	# sawhorse with a log
+	var sh := o + Vector2(s.x - 18, 10)
+	draw_line(sh + Vector2(0, 0), sh + Vector2(-3, 9), Color(0.35, 0.24, 0.12) * m, 1.4)
+	draw_line(sh + Vector2(0, 0), sh + Vector2(3, 9), Color(0.35, 0.24, 0.12) * m, 1.4)
+	draw_line(sh + Vector2(10, 0), sh + Vector2(7, 9), Color(0.35, 0.24, 0.12) * m, 1.4)
+	draw_line(sh + Vector2(10, 0), sh + Vector2(13, 9), Color(0.35, 0.24, 0.12) * m, 1.4)
+	draw_line(sh + Vector2(-4, -1), sh + Vector2(15, -1), Color(0.46, 0.30, 0.16) * m, 3.6)
+	draw_line(sh + Vector2(-4, -2), sh + Vector2(15, -2), Color(0.60, 0.42, 0.24) * m, 1.2)
+	# chopping block with an axe
+	var cb := o + Vector2(s.x - 10, s.y - 8)
+	draw_circle(cb, 3.6, Color(0.45, 0.30, 0.16) * m)
+	draw_circle(cb, 2.6, Color(0.76, 0.60, 0.38) * m)
+	draw_line(cb + Vector2(-1, 0), cb + Vector2(3, -6), Color(0.45, 0.32, 0.18) * m, 1.2)
+	draw_rect(Rect2(cb + Vector2(2, -8), Vector2(3, 2.5)), Color(0.55, 0.55, 0.58) * m)
+	# bundles of sticks
+	for k in 2:
+		var bp := o + Vector2(8 + k * 9, s.y - 6)
+		for j in 4:
+			draw_line(bp + Vector2(j * 1.2, -2), bp + Vector2(j * 1.2 + 6, -3), Color(0.55, 0.40, 0.22) * m, 0.9)
+		draw_line(bp + Vector2(3, -4), bp + Vector2(3, 0), Color(0.75, 0.68, 0.45) * m, 0.8)
 
 
 ## A ragged outlaw camp: two patched tents, a fire, a stash of stolen goods and a black banner.
@@ -453,7 +495,13 @@ func _draw_human(p: Human, selected: bool, zoom: float, tribe: Color) -> void:
 	if p.gender == "M" and a >= 16.0:
 		draw_rect(Rect2(head + Vector2(-2, 1.5) * s, Vector2(4, 2) * s), hair)
 	# job tool / carried goods
-	if p.carry_total() > 0:
+	if int(p.carrying.get("log", 0)) > 0:
+		# a whole log over the shoulder
+		var lc := head + Vector2(0, 2.5) * s
+		draw_line(lc + Vector2(-f * 9, 1) * s, lc + Vector2(f * 7, -3) * s, Color(0.36, 0.22, 0.12), 3.6 * s)
+		draw_line(lc + Vector2(-f * 9, 0.2) * s, lc + Vector2(f * 7, -3.8) * s, Color(0.52, 0.34, 0.18), 1.4 * s)
+		draw_circle(lc + Vector2(f * 7, -3) * s, 1.8 * s, Color(0.80, 0.66, 0.42))
+	elif p.carry_total() > 0:
 		draw_rect(Rect2(pos + Vector2(f * 4 - 2, -2 + bob) * s, Vector2(4, 4) * s), _carry_color(p))
 	elif p.weapon != "" and a >= 12.0:
 		_draw_weapon(p, pos, f, bob)
@@ -638,7 +686,7 @@ const SHADOW_HEIGHT := {"campfire": 0.0, "fence": 3.0, "wall": 7.0, "gate": 8.0,
 	"capitol": 20.0, "map_table": 3.0, "arrow_tower": 24.0, "farm": 0.0, "bedding": 2.0, "drying_rack": 5.0,
 	"research_table": 3.0, "well": 3.0, "shelter": 10.0, "stone_hut": 10.0, "house": 14.0, "stone_house": 16.0,
 	"storage": 8.0, "granary": 12.0, "workshop": 12.0, "healer_hut": 10.0, "mine": 8.0, "hunting_camp": 9.0,
-	"watchtower": 22.0, "harbor": 6.0, "monolith": 0.0, "mercenary_hall": 12.0, "bandit_camp": 0.0}
+	"watchtower": 22.0, "harbor": 6.0, "monolith": 0.0, "lumber_yard": 0.0, "mercenary_hall": 12.0, "bandit_camp": 0.0}
 const ROOFS := [Color(0.72, 0.62, 0.34), Color(0.66, 0.58, 0.30), Color(0.45, 0.30, 0.18), Color(0.70, 0.30, 0.22)]
 
 
@@ -663,6 +711,8 @@ func _draw_building(sim: Sim, b: Building) -> void:
 	match b.type:
 		"monolith":
 			_monolith(o, s, b.built, m)
+		"lumber_yard":
+			_lumber_yard(o, s, m)
 		"bandit_camp":
 			_bandit_camp(o, s, m)
 		"campfire":

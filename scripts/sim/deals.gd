@@ -8,6 +8,26 @@ extends RefCounted
 ## and allies may always cross each other's land.
 
 const OFFER_LIFE := 1.5            # sim days an offer stays open
+const WAIT := 300.0                # real seconds (5 minutes of play) between requests of one kind between two tribes
+
+
+# ---------------------------------------------------------------- waits between requests
+static func _wk(a: int, b: int, kind: String) -> String:
+	return "%d>%d:%s" % [a, b, kind]
+
+
+## Seconds of play left before `a` may make this kind of request of `b` again.
+static func wait_left(sim: Sim, a: int, b: int, kind: String) -> float:
+	return maxf(0.0, float(sim.diplo_cd.get(_wk(a, b, kind), 0.0)) - sim.play_secs)
+
+
+static func start_wait(sim: Sim, a: int, b: int, kind: String) -> void:
+	sim.diplo_cd[_wk(a, b, kind)] = sim.play_secs + WAIT
+
+
+static func wait_text(sim: Sim, a: int, b: int, kind: String) -> String:
+	var s := ceili(wait_left(sim, a, b, kind))
+	return "%d:%02d" % [s / 60, s % 60]
 const MAX_QUEUE := 3
 
 
@@ -133,6 +153,10 @@ static func pick_demand_state(sim: Sim, from: Colony, to: Colony) -> int:
 
 ## Queues an offer to the player.
 static func offer_player(sim: Sim, o: Dictionary) -> void:
+	var from_id := int(o["from"])
+	if wait_left(sim, from_id, 0, str(o["type"])) > 0.0 and not sim.debug_log:
+		return
+	start_wait(sim, from_id, 0, str(o["type"]))
 	for e in sim.deal_offers:
 		if int(e["from"]) == int(o["from"]):
 			return
@@ -323,6 +347,9 @@ static func _refused_demand(sim: Sim, o: Dictionary) -> void:
 # ---------------------------------------------------------------- the player proposes
 ## "" on success, or why it failed. kind: alliance / trade / tribute / land
 static func player_propose(sim: Sim, cid: int, kind: String) -> String:
+	if wait_left(sim, 0, cid, kind) > 0.0:
+		return "You must wait %s before asking the %s about that again." % [wait_text(sim, 0, cid, kind), sim.civ(cid).name]
+	start_wait(sim, 0, cid, kind)
 	var o := sim.civ(cid)
 	var me := sim.colony
 	var key := sim._key(0, cid)
@@ -406,7 +433,10 @@ static func ai_turn(sim: Sim, c: Colony) -> void:
 	if o.civ_id == 0:
 		offer_player(sim, deal)
 		return
-	# between two AI tribes: settled on the spot
+	# between two AI tribes: settled on the spot (and not asked again for a while)
+	if wait_left(sim, c.civ_id, o.civ_id, str(deal["type"])) > 0.0:
+		return
+	start_wait(sim, c.civ_id, o.civ_id, str(deal["type"]))
 	var ok := false
 	match str(deal["type"]):
 		"alliance":

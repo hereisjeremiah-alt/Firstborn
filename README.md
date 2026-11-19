@@ -239,7 +239,7 @@ results, people leaving, bandit raids and ambushes appear in large banners at th
 **Fog of war** (world creation option) — only the land around your camp is known at first; your Billies and
 buildings uncover the map (main view, minimap and World Map). Saved with the game.
 
-**Monolith** — now has a model: a tall black standing stone with glowing year marks on a ring of stones.
+**Monolith** — a plain grey standing stone with carved year notches on a ring of small stones.
 
 **Milestones (G)** — 27 goals in five groups (Survival, Growth, Knowledge, Diplomacy, War), each with a reward in
 Talents, KP or RP: first fire, first child, 10/25/50 people, roads, zoned buildings, 25 techs, each new age, a Monolith,
@@ -424,3 +424,16 @@ Tuning lives almost entirely in `scripts/world/defs.gd`. That includes day lengt
 - Alliances and trade treaties, conquering or annexing tribes, and tribes founding extra settlements.
 - Naval warfare; AI tribes don't build ships yet.
 - Sound, animation and sprite art.
+
+## Round D additions
+
+- **Lumber Yard & Lumberer** (research *Lumber Yard*, Caveman Age): lumberers fell whole trees, drag the log to the yard and chop each one into 14 sticks.
+  Felled trees grow back after a while (World rule *Tree regrow days*), but never where a building or road now stands.
+- **Fanfare** plays when your tribe elects a new leader.
+- **Diplomacy waits**: after asking another tribe for an alliance, passage, peace or a deal, you (and the AI) must wait 5 minutes of play time before asking that tribe for the same thing again. Buttons show the time left.
+- **Day/night** shading is always hidden at 8x speed or faster.
+- **Jobs window**: a centered window with a card per job (description, workers, priority stars, assign/remove) and a people list.
+- **Randomize sliders** buttons in the main-menu rule pages and in Settings › Game Rules.
+- **Age of consent** rule (People): 18–21, default 18.
+- **Saves**: the pause menu has separate *Save Game…* and *Load Game…* pages.
+- **Tech announcements**: every new technology shows a banner at the top of the screen with what it unlocks.

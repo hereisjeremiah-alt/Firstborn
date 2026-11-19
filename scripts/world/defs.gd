@@ -88,7 +88,7 @@ const MINE_RES := [R.BOULDER, R.LARGE_STONE, R.COPPER_ORE, R.TIN_ORE, R.IRON_ORE
 
 # ---------------------------------------------------------------- items
 const ITEM_NAMES := {
-	"wood": "Wood", "sticks": "Sticks", "stone": "Stone", "grass": "Grass Fiber",
+	"wood": "Wood", "sticks": "Sticks", "log": "Logs", "stone": "Stone", "grass": "Grass Fiber",
 	"hides": "Animal Hides", "bones": "Bones", "berries": "Berries", "mushrooms": "Mushrooms",
 	"fruit": "Tropical Fruit", "raw_meat": "Raw Meat", "fish": "Raw Fish",
 	"cooked_meat": "Cooked Meat", "cooked_fish": "Cooked Fish", "dried_meat": "Dried Meat",
@@ -97,7 +97,7 @@ const ITEM_NAMES := {
 	"stone_club": "Stone Club", "stone_spear": "Stone Spear", "sling": "Sling", "bronze_spear": "Bronze Spear",
 	"bronze_sword": "Bronze Sword", "bow": "Composite Bow", "iron_spear": "Iron Spear", "iron_sword": "Iron Sword", "crossbow": "Crossbow",
 }
-const MATERIALS := ["wood", "sticks", "stone", "grass", "hides", "bones", "copper_ore", "tin_ore", "iron_ore"]
+const MATERIALS := ["wood", "sticks", "log", "stone", "grass", "hides", "bones", "copper_ore", "tin_ore", "iron_ore"]
 
 # nut = hunger restored per unit. spoil = fraction lost per day. sick = illness chance when eaten.
 const FOOD := {
@@ -116,13 +116,31 @@ const EAT_ORDER := ["cooked_fish", "cooked_meat", "berries", "fruit", "mushrooms
 const DAILY_FOOD := 24.0   # hunger points one adult needs per day
 
 # ---------------------------------------------------------------- jobs
-const JOBS := ["laborer", "gatherer", "hunter", "builder", "farmer", "fisherman", "woodcutter", "miner", "cook", "healer", "researcher", "trader", "smith", "soldier"]
+const JOBS := ["laborer", "gatherer", "hunter", "builder", "farmer", "fisherman", "woodcutter", "lumberer", "miner", "cook", "healer", "researcher", "trader", "smith", "soldier"]
 # jobs that need a building before anyone can take them
-const JOB_NEEDS := {"smith": "blacksmith", "soldier": "training_camp"}
+const JOB_NEEDS := {"smith": "blacksmith", "soldier": "training_camp", "lumberer": "lumber_yard"}
+## One line about each job, for the Jobs window.
+const JOB_DESC := {
+	"laborer": "Hauls goods, fetches water, clears land and lays roads.",
+	"gatherer": "Picks berries, mushrooms, roots and grass.",
+	"hunter": "Hunts animals for meat, hides and bones.",
+	"builder": "Builds and repairs structures.",
+	"farmer": "Plants and harvests farm fields.",
+	"fisherman": "Catches fish in lakes, rivers and the sea.",
+	"woodcutter": "Chops wood from trees and gathers sticks.",
+	"lumberer": "Fells whole trees and hauls the logs to the Lumber Yard, where they're cut into sticks.",
+	"miner": "Digs stone and ore.",
+	"cook": "Cooks and dries meat and fish so it lasts.",
+	"healer": "Tends the sick and the wounded.",
+	"researcher": "Studies at the Research Table and turns knowledge into research.",
+	"trader": "Carries your trade orders to other tribes and back.",
+	"smith": "Forges weapons at the Blacksmith.",
+	"soldier": "Guards the village, trains and goes to war.",
+}
 const JOB_NAMES := {
 	"laborer": "General Laborer", "gatherer": "Gatherer", "hunter": "Hunter", "builder": "Builder",
 	"farmer": "Farmer", "fisherman": "Fisherman", "woodcutter": "Woodcutter", "miner": "Miner",
-	"cook": "Cook", "healer": "Healer", "researcher": "Researcher", "trader": "Trader", "smith": "Blacksmith", "soldier": "Soldier",
+	"cook": "Cook", "healer": "Healer", "researcher": "Researcher", "trader": "Trader", "smith": "Blacksmith", "soldier": "Soldier", "lumberer": "Lumberer",
 }
 
 # ---------------------------------------------------------------- town planning
@@ -152,7 +170,7 @@ static func zone_for(type: String) -> int:
 const BUILD_CATEGORIES := [
 	["Homes", ["shelter", "bedding", "stone_hut", "house", "stone_house"]],
 	["Food & Water", ["campfire", "drying_rack", "hunting_camp", "farm", "granary", "well"]],
-	["Storage & Industry", ["storage", "mine", "workshop", "blacksmith", "harbor"]],
+	["Storage & Industry", ["storage", "lumber_yard", "mine", "workshop", "blacksmith", "harbor"]],
 	["Knowledge & Civic", ["research_table", "healer_hut", "monolith", "map_table", "capitol"]],
 	["Defense & Military", ["fence", "wall", "gate", "training_camp", "mercenary_hall", "watchtower", "arrow_tower"]],
 ]
@@ -179,7 +197,7 @@ const TECH_ERA_INC := [0.5, 2.0, 3.0, 4.0]
 const MONEY_NAME := "Talents"
 const MONEY_START := 100.0
 # base price in Talents of one unit, before supply & demand
-const BASE_PRICE := {"wood": 1.0, "sticks": 0.5, "stone": 1.0, "grass": 0.4, "hides": 3.0, "bones": 2.0,
+const BASE_PRICE := {"wood": 1.0, "sticks": 0.5, "log": 3.0, "stone": 1.0, "grass": 0.4, "hides": 3.0, "bones": 2.0,
 	"copper_ore": 6.0, "tin_ore": 7.0, "iron_ore": 9.0, "berries": 1.0, "mushrooms": 1.0, "fruit": 1.2,
 	"raw_meat": 1.5, "fish": 1.4, "cooked_meat": 2.5, "cooked_fish": 2.3, "dried_meat": 3.0, "crops": 1.4, "roots": 0.8}
 
@@ -199,6 +217,8 @@ const BUILDINGS := {
 		"desc": "Houses 3. Sleeping inside keeps people warm and dry."},
 	"storage": {"name": "Storage Area", "size": Vector2i(2, 2), "cost": {"wood": 6, "sticks": 10}, "work": 20.0, "housing": 0,
 		"storage": 150, "water_cap": 20, "preserve": 0.3, "desc": "+150 storage, +20 water. Food spoils 30% slower."},
+	"lumber_yard": {"name": "Lumber Yard", "size": Vector2i(3, 2), "cost": {"wood": 12, "stone": 4}, "work": 20.0, "housing": 0, "tech": "lumbering",
+		"desc": "Lumberers fell whole trees, drag the logs here and cut each one into 14 sticks. Felled trees grow back in time."},
 	"research_table": {"name": "Research Table", "size": Vector2i(2, 1), "cost": {"wood": 8, "stone": 6}, "work": 15.0, "housing": 0,
 		"desc": "Researchers bring materials from the stockpile here and turn them into knowledge."},
 	"bedding": {"name": "Sleeping Area", "size": Vector2i(2, 1), "cost": {"grass": 12, "hides": 2}, "work": 10.0, "housing": 2,
@@ -340,7 +360,7 @@ const TECH_CATEGORIES := ["Food", "Construction", "Medicine", "Weapons", "Tools"
 const TECH_ORDER := [
 	"foraging_lore", "meat_drying", "fire_cooking", "fire_keeping", "lashing", "storage_pits",
 	"herb_lore", "hide_wraps", "clean_water", "sharpened_spears", "throwing_stones", "hunting_lore",
-	"stone_choppers", "bone_needles", "digging_sticks", "agriculture", "pottery", "fishing_nets",
+	"stone_choppers", "bone_needles", "digging_sticks", "lumbering", "agriculture", "pottery", "fishing_nets",
 	"animal_traps", "stone_huts", "wells", "mining", "woven_baskets", "herbalism",
 	"midwifery", "bone_setting", "flint_spears", "slings", "hide_shields", "polished_tools",
 	"flint_knapping", "mortar_pestle", "pack_carts", "boatbuilding", "paddles", "irrigation", "seed_selection",
@@ -368,6 +388,7 @@ const TECHS := {
 	"hunting_lore": {"name": "Hunting Lore", "era": 0, "kind": "Weapons", "cost": {"points": 40}, "fx": {"hunt_hit": 0.05}, "unlocks": ["hunting_camp"], "desc": "Unlocks the Hunting Camp."},
 	"stone_choppers": {"name": "Stone Choppers", "era": 0, "kind": "Tools", "cost": {"points": 30}, "fx": {"work_woodcutter": 0.25, "work_gatherer": 0.1, "work_laborer": 0.15}, "desc": "Sharp-edged rocks: chopping and gathering are faster."},
 	"bone_needles": {"name": "Bone Needles", "era": 0, "kind": "Tools", "cost": {"points": 30}, "fx": {"warmth": 2.0, "work_laborer": 0.1}, "desc": "Sewn clothes fit better and keep out the wind."},
+	"lumbering": {"name": "Lumber Yard", "era": 0, "kind": "Tools", "cost": {"points": 35, "wood": 6}, "fx": {}, "unlocks": ["lumber_yard"], "desc": "Unlocks the Lumber Yard and the Lumberer job: whole trees are felled, hauled in as logs and cut into sticks."},
 	"digging_sticks": {"name": "Digging Sticks", "era": 0, "kind": "Tools", "cost": {"points": 25}, "fx": {"work_gatherer": 0.1, "work_miner": 0.1}, "desc": "Pointed sticks for roots and stones."},
 	"agriculture": {"name": "Agriculture", "era": 1, "kind": "Food", "cost": {"points": 150}, "fx": {}, "unlocks": ["farm"], "desc": "Planting seeds on purpose. Unlocks Farm Plots."},
 	"pottery": {"name": "Pottery", "era": 1, "kind": "Food", "cost": {"points": 160}, "fx": {"preserve": 0.1}, "unlocks": ["granary"], "desc": "Fired clay pots. Unlocks the Granary; food keeps longer."},

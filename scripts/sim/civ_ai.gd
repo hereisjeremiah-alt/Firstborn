@@ -5,7 +5,7 @@ extends RefCounted
 ##  - decides what to build next, saves materials for it and picks a sensible site
 ## AI tribes always use it. The player's tribe uses it while auto-jobs / auto-build are on.
 
-const JOB_ORDER := ["gatherer", "hunter", "laborer", "researcher", "smith", "soldier", "builder", "healer", "cook", "woodcutter", "fisherman", "farmer", "miner", "trader"]
+const JOB_ORDER := ["gatherer", "hunter", "laborer", "researcher", "smith", "soldier", "builder", "healer", "cook", "woodcutter", "lumberer", "fisherman", "farmer", "miner", "trader"]
 
 
 static func update(sim: Sim, c: Colony) -> void:
@@ -125,6 +125,7 @@ static func desired_jobs(sim: Sim, c: Colony, n: int) -> Dictionary:
 	want["healer"] = 1 if n >= 7 or (c.sick_count() > 0 and n >= 4) else 0
 	want["cook"] = 1 if n >= 5 and (c.raw_food() >= 3.0 or c.has_built("drying_rack")) else 0
 	want["woodcutter"] = (1 if n >= 5 else 0) + (1 if season >= 2 and n >= 9 else 0)
+	want["lumberer"] = ((1 if n >= 4 else 0) + (1 if n >= 12 else 0)) if c.job_allowed("lumberer") else 0
 	want["fisherman"] = 1 if n >= 6 else 0
 	want["farmer"] = mini(n / 4, c.count_type("farm", false))
 	want["miner"] = (1 if n >= 12 else 0) + (1 if c.count_type("mine", false) > 0 and n >= 7 else 0) \
@@ -245,7 +246,7 @@ static func next_building(sim: Sim, c: Colony) -> String:
 		return "storage"
 	if c.count_type("research_table") == 0 and pop >= 3:
 		return "research_table"
-	for t in ["drying_rack", "well", "hunting_camp", "healer_hut", "workshop", "training_camp", "blacksmith", "map_table", "capitol"]:
+	for t in ["drying_rack", "well", "hunting_camp", "lumber_yard", "healer_hut", "workshop", "training_camp", "blacksmith", "map_table", "capitol"]:
 		var min_pop := 4
 		if t == "training_camp" or t == "blacksmith":
 			min_pop = 6 if sim.enemies_of(c.civ_id).is_empty() else 3

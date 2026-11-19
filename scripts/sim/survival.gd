@@ -348,7 +348,7 @@ static func daily(sim: Sim, c: Colony) -> void:
 	var singles_m: Array = []
 	var singles_f: Array = []
 	for p in people:
-		if p.partner_id == -1 and p.age_years() >= 16.0 and p.age_years() < 50.0:
+		if p.partner_id == -1 and p.age_years() >= Config.rule("consent_age") and p.age_years() < 50.0:
 			if p.gender == "M":
 				singles_m.append(p)
 			else:
@@ -384,7 +384,7 @@ static func daily(sim: Sim, c: Colony) -> void:
 		if p.pregnant_days < -1.0:
 			p.pregnant_days += 1.0
 			continue
-		if p.partner_id == -1 or p.age_years() < 16.0 or p.age_years() > 46.0:
+		if p.partner_id == -1 or p.age_years() < Config.rule("consent_age") or p.age_years() > 46.0:
 			continue
 		var partner := c.person(p.partner_id)
 		if partner == null or not partner.alive:

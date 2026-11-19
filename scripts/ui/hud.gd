@@ -75,6 +75,7 @@ func setup(g: Node) -> void:
 	_build_fps()
 	_build_passage_dialog()
 	_build_trade_window()
+	_build_jobs_window()
 	_build_deal_card()
 	_build_announce()
 	_build_planner()
@@ -657,6 +658,9 @@ func toggle_panel(which: String) -> void:
 	if which == "research":
 		toggle_research()
 		return
+	if which == "jobs":
+		toggle_jobs_window()
+		return
 	if which == "build":
 		toggle_build_window()
 		return
@@ -676,6 +680,8 @@ func toggle_panel(which: String) -> void:
 func close_panel() -> void:
 	research_layer.visible = false
 	build_layer.visible = false
+	if jobs_layer != null:
+		jobs_layer.visible = false
 	if trade_layer != null:
 		trade_layer.visible = false
 	settings_layer.visible = false
@@ -685,7 +691,7 @@ func close_panel() -> void:
 
 
 func is_panel_open() -> bool:
-	return side_panel.visible or research_layer.visible or build_layer.visible or settings_layer.visible or (trade_layer != null and trade_layer.visible)
+	return side_panel.visible or research_layer.visible or build_layer.visible or settings_layer.visible or (trade_layer != null and trade_layer.visible) or (jobs_layer != null and jobs_layer.visible)
 
 
 func _clear_body() -> void:
@@ -1116,7 +1122,6 @@ func _on_share_changed(v: float) -> void:
 
 func _on_research(id: String) -> void:
 	if game.sim.colony.research(id):
-		push_event("Researched %s!" % Defs.TECHS[id]["name"], "good")
 		game.sim.emit_signal("buildings_changed")
 	_tree_sig = ""
 	_refresh_research()
@@ -1222,7 +1227,10 @@ func _panel_jobs() -> void:
 
 func _on_auto_jobs(on: bool) -> void:
 	game.sim.colony.auto_jobs = on
-	_rebuild_panel()
+	if jobs_layer != null and jobs_layer.visible:
+		_fill_jobs_window()
+	else:
+		_rebuild_panel()
 
 
 func _on_auto_build(on: bool) -> void:
@@ -1425,6 +1433,12 @@ Every few years the adults elect a Chief (Caveman and Stone Age). From the Bronz
 
 [b]Plan Town (Z)[/b]
 Paint Farming, Housing and Workshop zones and lay out roads (across lakes and rivers they become bridges). Nothing can be built on a road or a planned road, except a gate. Buildings standing in the zone that suits them get bonuses (farms +25%, homes +1 bed and better sleep, workshops and research 20% faster). Billies walk about twice as fast on roads; laborers and builders build them.
+
+[b]Lumber Yard[/b]
+Research Lumber Yard (Caveman Age) and build one near a forest. Lumberers fell whole trees, carry each log to the yard and chop it into 14 sticks. Felled trees grow back in time, but never under a building or road.
+
+[b]Diplomacy[/b]
+After asking a tribe for an alliance, passage, peace or a deal, wait 5 minutes before asking them for the same thing again. The button shows the time left.
 
 [b]Milestones (G)[/b]
 27 goals, from your first fire to a realm of many lands. Each pays Talents, knowledge or research points.
@@ -1991,26 +2005,34 @@ func toggle_pause_menu() -> void:
 		game.menu_paused = true
 
 
-func _fill_pause_menu(message: String) -> void:
+func _fill_pause_menu(message: String, page := "main") -> void:
 	for c in pause_box.get_children():
 		pause_box.remove_child(c)
 		c.queue_free()
+	if page == "save" or page == "load":
+		pause_box.add_child(_label("Save Game" if page == "save" else "Load Game", 22, Color(1.0, 0.85, 0.5)))
+		if message != "":
+			pause_box.add_child(_label(message, 14, Color(0.6, 0.95, 0.55)))
+		pause_box.add_child(_label("Pick a slot to %s." % ("save into (it replaces what's there)" if page == "save" else "load"), 13, Color(0.75, 0.72, 0.65)))
+		for i in SaveSystem.SLOTS:
+			var b: Button
+			if page == "save":
+				b = _button(SaveSystem.describe(i), _on_save.bind(i))
+			else:
+				b = _button(SaveSystem.describe(i), _on_load.bind(i))
+				b.disabled = SaveSystem.info(i).is_empty()
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			pause_box.add_child(b)
+		pause_box.add_child(HSeparator.new())
+		pause_box.add_child(_button("Back", _fill_pause_menu.bind("", "main")))
+		return
 	pause_box.add_child(_label("Game Menu", 22, Color(1.0, 0.85, 0.5)))
 	if message != "":
 		pause_box.add_child(_label(message, 14, Color(0.6, 0.95, 0.55)))
 	pause_box.add_child(_button("Resume", toggle_pause_menu))
 	pause_box.add_child(HSeparator.new())
-	pause_box.add_child(_label("Save game", 15))
-	for i in SaveSystem.SLOTS:
-		var b := _button("Save to " + SaveSystem.describe(i), _on_save.bind(i))
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		pause_box.add_child(b)
-	pause_box.add_child(_label("Load game", 15))
-	for i in SaveSystem.SLOTS:
-		var b := _button("Load " + SaveSystem.describe(i), _on_load.bind(i))
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.disabled = SaveSystem.info(i).is_empty()
-		pause_box.add_child(b)
+	pause_box.add_child(_button("Save Game…", _fill_pause_menu.bind("", "save")))
+	pause_box.add_child(_button("Load Game…", _fill_pause_menu.bind("", "load")))
 	pause_box.add_child(HSeparator.new())
 	pause_box.add_child(_button("Settings", _open_settings))
 	pause_box.add_child(_button("Main Menu", Callable(game, "go_main_menu")))
@@ -2019,7 +2041,7 @@ func _fill_pause_menu(message: String) -> void:
 
 func _on_save(slot: int) -> void:
 	var ok: bool = game.save_slot(slot)
-	_fill_pause_menu("Saved to slot %d." % (slot + 1) if ok else "Save failed!")
+	_fill_pause_menu("Saved to slot %d." % (slot + 1) if ok else "Save failed!", "save")
 
 
 func _on_load(slot: int) -> void:
@@ -2108,6 +2130,8 @@ func _process(delta: float) -> void:
 		_show_gov_dialog()
 	if research_layer.visible:
 		_refresh_research()
+	if jobs_layer != null and jobs_layer.visible:
+		_refresh_jobs_window()
 	if build_layer.visible and _build_signature() != _build_sig:
 		refresh_build_window()
 	if side_panel.visible:
@@ -2246,7 +2270,7 @@ func _info_civ(sim: Sim, oc: Colony) -> void:
 		if sim.peace_offers.has(oc.civ_id):
 			s += "[color=#9fe08a]They are offering peace.[/color]\n"
 			acts.append(["Accept their peace", _on_accept_peace.bind(oc.civ_id)])
-		acts.append(["Offer peace", _on_offer_peace.bind(oc.civ_id)])
+		acts.append(["Offer peace" + _wait_tag(oc.civ_id, "peace"), _on_offer_peace.bind(oc.civ_id)])
 	else:
 		var why := sim.war_problem(0, oc.civ_id)
 		if why == "":
@@ -2259,10 +2283,10 @@ func _info_civ(sim: Sim, oc: Colony) -> void:
 				s += "[color=#9fe08a][b]Allied[/b] — you defend each other and may cross each other's land.[/color]\n"
 				acts.append(["Break alliance", _on_deal_propose.bind(oc.civ_id, "break")])
 			else:
-				acts.append(["Propose alliance (%d%%)" % roundi(clampf(0.15 + sim.relation(0, oc.civ_id) / 100.0, 0.02, 0.9) * 100.0), _on_deal_propose.bind(oc.civ_id, "alliance")])
-			acts.append(["Demand tribute", _on_deal_propose.bind(oc.civ_id, "tribute")])
+				acts.append(["Propose alliance (%d%%)%s" % [roundi(clampf(0.15 + sim.relation(0, oc.civ_id) / 100.0, 0.02, 0.9) * 100.0), _wait_tag(oc.civ_id, "alliance")], _on_deal_propose.bind(oc.civ_id, "alliance")])
+			acts.append(["Demand tribute" + _wait_tag(oc.civ_id, "tribute"), _on_deal_propose.bind(oc.civ_id, "tribute")])
 			if me.era_i >= 1:
-				acts.append(["Demand land", _on_deal_propose.bind(oc.civ_id, "land")])
+				acts.append(["Demand land" + _wait_tag(oc.civ_id, "land"), _on_deal_propose.bind(oc.civ_id, "land")])
 			var their_allies := Deals.allies_of(sim, oc.civ_id)
 			if not their_allies.is_empty():
 				s += "Allies: %s\n" % ", ".join(PackedStringArray(their_allies.map(func(a): return "you" if a.civ_id == 0 else a.name)))
@@ -2274,7 +2298,7 @@ func _info_civ(sim: Sim, oc: Colony) -> void:
 		else:
 			s += "Your Billies may not cross their land. Caught there: %d%% chance of war.\n" % roundi(Borders.war_chance(sim, 0, oc.civ_id) * 100.0)
 			if met:
-				acts.append(["Ask for passage (%d%%)" % roundi(Borders.grant_chance(sim, 0, oc.civ_id) * 100.0), _on_ask_passage.bind(oc.civ_id)])
+				acts.append(["Ask for passage (%d%%)%s" % [roundi(Borders.grant_chance(sim, 0, oc.civ_id) * 100.0), _wait_tag(oc.civ_id, "passage")], _on_ask_passage.bind(oc.civ_id)])
 		if theirs_left > 0.0:
 			s += "They may cross your land (%d more years).\n" % ceili(theirs_left)
 			acts.append(["Revoke their passage", _on_revoke_passage.bind(oc.civ_id)])
@@ -2282,8 +2306,18 @@ func _info_civ(sim: Sim, oc: Colony) -> void:
 		acts.append(["Trade", open_trade.bind(oc.civ_id)])
 	acts.append(["Go to their camp", func(): game.camera.position = sim.world.center_of(oc.home)])
 	info_text.text = s
-	_set_actions("civ%d|%s|%s|%s|%s|%d|%d" % [oc.civ_id, str(war), str(sim.peace_offers.has(oc.civ_id)), str(met), str(Deals.allied(sim, 0, oc.civ_id)),
+	var waits := 0
+	for wk in ["alliance", "tribute", "land", "passage", "peace"]:
+		waits += ceili(Deals.wait_left(sim, 0, oc.civ_id, wk) / 5.0)
+	_set_actions("civ%d|%d|%s|%s|%s|%s|%d|%d" % [oc.civ_id, waits, str(war), str(sim.peace_offers.has(oc.civ_id)), str(met), str(Deals.allied(sim, 0, oc.civ_id)),
 		ceili(Borders.access_years_left(sim, 0, oc.civ_id)), ceili(Borders.access_years_left(sim, oc.civ_id, 0))], acts)
+
+
+## " (wait 4:12)" while a request to this tribe has to wait, else "".
+func _wait_tag(cid: int, kind: String) -> String:
+	if Deals.wait_left(game.sim, 0, cid, kind) <= 0.0:
+		return ""
+	return " (wait %s)" % Deals.wait_text(game.sim, 0, cid, kind)
 
 
 func _on_deal_propose(cid: int, kind: String) -> void:
@@ -2599,6 +2633,249 @@ func _open_settings() -> void:
 
 # ================================================================ build window
 # A window in the middle of the screen: one tab per age, structures grouped by kind.
+# ================================================================ jobs window
+## A centred window like the research tree: a card for every job (how many work it, what it
+## does, its priority, + / − to move people) and the list of everyone with their job.
+var jobs_layer: PanelContainer
+var jobs_body: VBoxContainer
+var jobs_sig := ""
+var job_count_labels := {}
+
+
+func _build_jobs_window() -> void:
+	jobs_layer = PanelContainer.new()
+	jobs_layer.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	jobs_layer.offset_left = -560
+	jobs_layer.offset_right = 560
+	jobs_layer.offset_top = -340
+	jobs_layer.offset_bottom = 340
+	jobs_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	jobs_layer.visible = false
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.07, 0.065, 0.06, 1.0)
+	bg.border_color = Color(0.55, 0.45, 0.28)
+	bg.set_border_width_all(2)
+	bg.set_corner_radius_all(6)
+	bg.set_content_margin_all(12)
+	jobs_layer.add_theme_stylebox_override("panel", bg)
+	root.add_child(jobs_layer)
+	jobs_body = VBoxContainer.new()
+	jobs_body.add_theme_constant_override("separation", 8)
+	jobs_layer.add_child(jobs_body)
+
+
+func toggle_jobs_window() -> void:
+	if jobs_layer.visible:
+		close_panel()
+		return
+	side_panel.visible = false
+	research_layer.visible = false
+	build_layer.visible = false
+	if trade_layer != null:
+		trade_layer.visible = false
+	current_panel = ""
+	_fill_jobs_window()
+	jobs_layer.visible = true
+
+
+func _jobs_signature() -> String:
+	var c = game.sim.colony
+	var parts := PackedStringArray([str(c.auto_jobs), str(c.population())])
+	for p in c.living():
+		parts.append("%d:%s:%s" % [p.id, p.job, str(p.can_work())])
+	for j in Defs.JOBS:
+		parts.append(str(c.job_allowed(j)))
+	return "|".join(parts)
+
+
+func _refresh_jobs_window() -> void:
+	var sig := _jobs_signature()
+	if sig != jobs_sig:
+		_fill_jobs_window()
+		return
+	for pid in job_status_labels.keys():
+		var p: Human = game.sim.person(absi(pid))
+		if p != null and is_instance_valid(job_status_labels[pid]):
+			job_status_labels[pid].text = p.state
+
+
+func _fill_jobs_window() -> void:
+	var sim: Sim = game.sim
+	var c := sim.colony
+	jobs_sig = _jobs_signature()
+	for n in jobs_body.get_children():
+		jobs_body.remove_child(n)
+		n.queue_free()
+	job_status_labels.clear()
+	job_count_labels.clear()
+	# header
+	var head := HBoxContainer.new()
+	jobs_body.add_child(head)
+	var title := _label("Jobs", 24, Color(1.0, 0.85, 0.5))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	for e in [["Tribe AI assigns jobs", c.auto_jobs, _on_auto_jobs], ["AI places buildings", c.auto_build, _on_auto_build],
+			["AI claims free land", c.auto_expand, func(on): game.sim.colony.auto_expand = on]]:
+		var cb := CheckButton.new()
+		cb.text = e[0]
+		cb.button_pressed = e[1]
+		cb.focus_mode = Control.FOCUS_NONE
+		cb.toggled.connect(e[2])
+		head.add_child(cb)
+	head.add_child(_button("Close  [J]", close_panel, 100))
+	var hint := "The tribe AI is choosing jobs. Switch it off to set them yourself with the + and − buttons or the list on the right." if c.auto_jobs \
+		else "Use + and − to move people between jobs, or pick a job for anyone in the list. Priority (★): when someone's own job has nothing to do, they help the jobs with the most stars first."
+	jobs_body.add_child(_label(hint, 12, Color(0.75, 0.72, 0.65)))
+	var cols := HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 14)
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	jobs_body.add_child(cols)
+	# --- job cards
+	var left := ScrollContainer.new()
+	left.custom_minimum_size = Vector2(640, 560)
+	left.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	cols.add_child(left)
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 8)
+	left.add_child(grid)
+	var counts := {}
+	for p in c.living():
+		if p.can_work():
+			counts[p.job] = int(counts.get(p.job, 0)) + 1
+	for j in Defs.JOBS:
+		grid.add_child(_job_card(c, j, int(counts.get(j, 0))))
+	# --- people list
+	var right := VBoxContainer.new()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cols.add_child(right)
+	right.add_child(_label("People (%d)" % c.population(), 16, Color(1.0, 0.85, 0.5)))
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(420, 530)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right.add_child(sc)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(list)
+	for p in c.living():
+		var row := HBoxContainer.new()
+		list.add_child(row)
+		var nm := _label("%s %s, %d" % [p.name, "♂" if p.gender == "M" else "♀", int(p.age_years())], 13)
+		nm.custom_minimum_size.x = 140
+		nm.clip_text = true
+		row.add_child(nm)
+		if p.can_work() and not c.auto_jobs:
+			var ob := OptionButton.new()
+			ob.focus_mode = Control.FOCUS_NONE
+			ob.custom_minimum_size.x = 140
+			for k in Defs.JOBS.size():
+				ob.add_item(Defs.JOB_NAMES[Defs.JOBS[k]], k)
+				if not c.job_allowed(Defs.JOBS[k]):
+					ob.set_item_disabled(k, true)
+			ob.select(maxi(0, Defs.JOBS.find(p.job)))
+			ob.item_selected.connect(_on_job_selected.bind(p.id))
+			row.add_child(ob)
+		else:
+			var jl := _label(Defs.JOB_NAMES.get(p.job, p.job) if p.can_work() else "Too young to work", 13, Color(1.0, 0.85, 0.5) if p.can_work() else Color(0.6, 0.6, 0.55))
+			jl.custom_minimum_size.x = 140
+			row.add_child(jl)
+		var st := _label(p.state, 11, Color(0.72, 0.72, 0.68))
+		st.clip_text = true
+		st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(st)
+		job_status_labels[p.id] = st
+
+
+func _job_card(c: Colony, j: String, n: int) -> Control:
+	var allowed := c.job_allowed(j)
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(205, 128)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.13, 0.11, 0.09) if allowed else Color(0.09, 0.085, 0.08)
+	sb.border_color = Color(0.62, 0.50, 0.30, 0.9) if n > 0 else Color(0.35, 0.30, 0.22, 0.8)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(5)
+	sb.set_content_margin_all(7)
+	card.add_theme_stylebox_override("panel", sb)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 3)
+	card.add_child(v)
+	var top := HBoxContainer.new()
+	v.add_child(top)
+	var name_l := _label(Defs.JOB_NAMES[j], 15, Color(1.0, 0.88, 0.6) if allowed else Color(0.55, 0.53, 0.5))
+	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(name_l)
+	top.add_child(_label(str(n), 18, Color(0.62, 0.9, 1.0) if n > 0 else Color(0.5, 0.5, 0.5)))
+	var desc := _label(Defs.JOB_DESC.get(j, ""), 11, Color(0.72, 0.7, 0.64))
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.custom_minimum_size = Vector2(190, 44)
+	v.add_child(desc)
+	if not allowed:
+		var need := "Needs a Training Camp or Mercenary Hall" if j == "soldier" else "Needs a %s" % Defs.BUILDINGS[Defs.JOB_NEEDS[j]]["name"]
+		v.add_child(_label("🔒 " + need, 11, Color(1.0, 0.6, 0.5)))
+		return card
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	v.add_child(row)
+	var prio := int(c.job_priority.get(j, 3))
+	var stars := _label("★".repeat(prio) + "☆".repeat(5 - prio), 13, Color(1.0, 0.8, 0.35))
+	stars.tooltip_text = "Priority %d of 5 — click − / + on the right of the stars to change it." % prio
+	stars.mouse_filter = Control.MOUSE_FILTER_STOP
+	row.add_child(stars)
+	var pm := _button("−", _on_job_prio.bind(j, -1), 22)
+	pm.tooltip_text = "Lower priority"
+	row.add_child(pm)
+	var pp := _button("+", _on_job_prio.bind(j, 1), 22)
+	pp.tooltip_text = "Raise priority"
+	row.add_child(pp)
+	if not c.auto_jobs:
+		var row2 := HBoxContainer.new()
+		row2.add_theme_constant_override("separation", 4)
+		v.add_child(row2)
+		var rm := _button("− Remove", _on_job_move.bind(j, -1), 92)
+		rm.disabled = n == 0
+		row2.add_child(rm)
+		var ad := _button("+ Assign", _on_job_move.bind(j, 1), 92)
+		row2.add_child(ad)
+	return card
+
+
+func _on_job_prio(j: String, d: int) -> void:
+	var c = game.sim.colony
+	c.job_priority[j] = clampi(int(c.job_priority.get(j, 3)) + d, 1, 5)
+	_fill_jobs_window()
+
+
+## + Assign takes someone from the least important job; − Remove makes one of them a laborer.
+func _on_job_move(j: String, d: int) -> void:
+	var c = game.sim.colony
+	var pick: Human = null
+	if d > 0:
+		var best := 99
+		for p in c.living():
+			if not p.can_work() or p.job == j:
+				continue
+			var pr := int(c.job_priority.get(p.job, 3)) * 10 + (5 if p.job == "soldier" else 0)
+			if p.job == "laborer":
+				pr -= 5
+			if pr < best:
+				best = pr
+				pick = p
+		if pick != null:
+			_on_job_selected(Defs.JOBS.find(j), pick.id)
+	else:
+		for p in c.living():
+			if p.job == j and p.can_work():
+				pick = p
+		if pick != null:
+			if j == "soldier":
+				Military.discharge(game.sim, pick)
+			else:
+				_on_job_selected(Defs.JOBS.find("laborer"), pick.id)
+	_fill_jobs_window()
+
+
 # ================================================================ trade window
 ## Opened from another tribe's flag. Pick goods and people to buy, goods to sell; a trader
 ## then walks over and back carrying everything.

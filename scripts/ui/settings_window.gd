@@ -79,11 +79,21 @@ func _ready() -> void:
 			group = r[7]
 			list.add_child(_label(group, 16, Color(1.0, 0.85, 0.5)))
 		_rule_row(list, r)
+	var rbtns := HBoxContainer.new()
+	rbtns.add_theme_constant_override("separation", 8)
+	rules.add_child(rbtns)
 	var reset := Button.new()
 	reset.text = "Reset all rules to defaults"
 	reset.focus_mode = Control.FOCUS_NONE
+	reset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	reset.pressed.connect(_on_rules_reset)
-	rules.add_child(reset)
+	rbtns.add_child(reset)
+	var rnd := Button.new()
+	rnd.text = "Randomize sliders"
+	rnd.focus_mode = Control.FOCUS_NONE
+	rnd.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rnd.pressed.connect(_on_rules_random)
+	rbtns.add_child(rnd)
 
 	# --- accessibility
 	var acc := _tab(tabs, "Accessibility")
@@ -180,6 +190,14 @@ func _show_rule(key: String) -> void:
 	for vl in _rule_values[key]:
 		(vl as Label).text = text
 		(vl as Label).add_theme_color_override("font_color", Color(1.0, 0.75, 0.35) if changed else Color(0.6, 0.85, 1.0))
+
+
+func _on_rules_random() -> void:
+	Config.randomize_rules()
+	for k in _rule_sliders.keys():
+		for s2 in _rule_sliders[k]:
+			(s2 as HSlider).set_value_no_signal(Config.rule(k))
+		_show_rule(k)
 
 
 func _on_rules_reset() -> void:

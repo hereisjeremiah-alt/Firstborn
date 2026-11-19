@@ -60,6 +60,11 @@ static func request(sim: Sim, a: int, b: int, by_player := false) -> void:
 	var now := sim.time.cal_years()
 	if float(sim.access_denied.get(k, -1.0)) > now and not by_player:
 		return
+	if Deals.wait_left(sim, a, b, "passage") > 0.0:
+		if by_player:
+			sim.emit_signal("event", "You must wait %s before asking the %s for passage again." % [Deals.wait_text(sim, a, b, "passage"), sim.civ(b).name], "warn")
+		return
+	Deals.start_wait(sim, a, b, "passage")
 	var ca := sim.civ(a)
 	var cb := sim.civ(b)
 	if ca == null or cb == null or ca.collapsed or cb.collapsed:

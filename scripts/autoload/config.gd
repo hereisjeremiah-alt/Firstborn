@@ -20,6 +20,7 @@ const RULES := [
 	["birth_recovery", "Rest between children (days)", 0.0, 90.0, 5.0, 20.0, "d", "People", "Days before a mother can conceive again."],
 	["aging_speed", "Aging speed (adults)", 0.25, 4.0, 0.05, 1.0, "x", "People", "How fast adults grow old. 1x = one life year every 40 days."],
 	["child_growth", "Child growth speed", 1.0, 8.0, 0.5, 3.0, "x", "People", "How much faster children age than adults."],
+	["consent_age", "Age of consent (partners & children)", 18.0, 21.0, 1.0, 18.0, "d", "People", "The youngest age at which Billies may become partners and have children (18 to 21)."],
 	["allow_kin", "Partners within the family", 0.0, 1.0, 1.0, 1.0, "b", "People", "Lets close relatives (siblings, parent and child) become partners. Unrelated partners are still preferred."],
 	["kin_frailty", "Frailty of children of close kin", 0.0, 1.0, 0.05, 0.3, "%", "People", "Chance a child of close relatives is born frail: weaker at work and likelier to die of illness."],
 	["work_age", "Age children start working", 3.0, 16.0, 1.0, 6.0, "d", "People", "Life years before children take jobs."],
@@ -41,6 +42,7 @@ const RULES := [
 	["start_money", "Starting Talents", 0.0, 1000.0, 10.0, 100.0, "d", "World", "Money in every tribe's bank at the start."],
 	["shell_income", "Daily Talents per person", 0.0, 2.0, 0.05, 0.25, "d", "World", "Talents each tribe gathers per person per day."],
 	["ai_aggression", "Rival aggression", 0.0, 3.0, 0.1, 1.0, "x", "World", "How readily AI tribes go to war."],
+	["tree_regrow_days", "Days for a felled tree to grow back", 3.0, 120.0, 1.0, 25.0, "d", "World", "Work-days before a felled tree grows back (in spring and summer), unless a structure or road stands on the spot."],
 	["bandit_camps", "Bandit camps", 0.0, 10.0, 1.0, 3.0, "d", "World", "Outlaw camps placed in the wilds at the start of a new game. Bandits rob villages and ambush traders."],
 	["trespass_war", "War chance when caught trespassing", 0.0, 1.0, 0.05, 0.3, "%", "World", "Chance a tribe goes to war when it catches a foreign Billy on its land without permission. +10% for every age after the Caveman Age."],
 	["defect_below", "Unhappiness that splits a tribe", 0.0, 0.6, 0.05, 0.2, "%", "World", "When a tribe's political happiness falls below this, a group of its people may leave."],
@@ -76,6 +78,28 @@ func reset_rules() -> void:
 	rules.clear()
 	for r in RULES:
 		rules[r[0]] = float(r[5])
+
+
+## Random but playable rules: each slider lands somewhere between half and nearly double its
+## default (within its range); on/off rules flip a coin.
+func randomize_rules() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	for r in RULES:
+		var key: String = r[0]
+		var lo: float = r[2]
+		var hi: float = r[3]
+		var step: float = r[4]
+		var def: float = r[5]
+		var v: float
+		if r[6] == "b":
+			v = 1.0 if rng.randf() < 0.5 else 0.0
+		elif def <= 0.0:
+			v = rng.randf_range(lo, lo + (hi - lo) * 0.3)
+		else:
+			v = def * rng.randf_range(0.5, 1.8)
+		v = clampf(snappedf(v, step), lo, hi)
+		rules[key] = v
 
 
 func reset_races() -> void:
