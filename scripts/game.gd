@@ -1,0 +1,1543 @@
+extends Node2D
+## Game scene controller: builds the world view, lets the player choose a starting location,
+## steps the simulation, handles input, day/night lighting, seasonal visuals, campfire lights,
+## saving and loading.
+
+const MAX_STEP := 0.1   # largest simulation step (real seconds × speed)
+
+var sim: Sim
+var terrain: TerrainView
+var resources: ResourceLayer
+var entities: EntityLayer
+var camera: CameraController
+var canvas_mod: CanvasModulate
+var hud: HUD
+var weather_overlay: WeatherOverlay
+var light_root: Node2D
+var lights := {}            # building id -> PointLight2D
+
+var speed := 1.0
+var paused := false
+var menu_paused := false
+var picking := false        # choosing where the tribe starts
+var reveal_all := true      # all tribes are shown on maps (flags are visible from above)
+var selected_human_id := -1
+var selected_building_id := -1
+var selected_ids: Array = []     # your people under command
+var selected_ship_id := -1
+var selected_civ_id := -1        # a tribe picked by clicking its flag (diplomacy)
+var selected_state := -1         # a territory state picked on the Territory map
+var _cheat_presses: Array = []   # times of recent Shift+Plus presses
+var _light_mix := 1.0            # 1 = showing the day/night cycle, 0 = frozen at daylight
+var tool_mode := ""              # "clear": drag a box to clear land
+var clear_dragging := false
+var clear_start := Vector2.ZERO
+var dragging := false
+var drag_start := Vector2.ZERO
+var order_marker := Vector2.ZERO
+var order_marker_col := Color.WHITE
+var order_marker_t := 0.0
+var build_mode := ""
+var hover_tile := Vector2i(-1, -1)
+var place_tile := Vector2i(-1, -1)
+var view_rect := Rect2()
+
+var _season_shown := -1
+var _pending_events: Array = []
+var _ready_done := false
+var _args: PackedStringArray
+
+
+func _ready() -> void:
+	_args = OS.get_cmdline_user_args()
+	var loading_layer := CanvasLayer.new()
+	add_child(loading_layer)
+	var lbl := Label.new()
+	lbl.text = "Generating world…"
+	lbl.add_theme_font_size_override("font_size", 28)
+	lbl.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	loading_layer.add_child(lbl)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	sim = Sim.new()
+	sim.event.connect(_on_event)
+	sim.tile_changed.connect(_on_tile_changed)
+	sim.buildings_changed.connect(_sync_lights)
+	var cam_data: Array = []
+	if _args.has("--loadtest"):
+		Config.load_slot = 2
+	var loaded := false
+	if Config.load_slot >= 0:
+		var d := SaveSystem.load_data(Config.load_slot)
+		Config.load_slot = -1
+		if d.is_empty():
+			_pending_events.append(["That save could not be read — starting a new world.", "bad"])
+		else:
+			sim.from_dict(d)
+			cam_data = d.get("camera", [])
+			loaded = true
+			_pending_events.append(["Game loaded. Welcome back.", "good"])
+	if not loaded:
+		sim.new_world(Config.seed_value, Config.world_size)
+	_build_scene(cam_data)
+	loading_layer.queue_free()
+	_ready_done = true
+	if not loaded:
+		_begin_picking()
+	if _args.has("--autotest"):
+		_autotest()
+	elif _args.has("--shots"):
+		_shots()
+	elif _args.has("--cmdtest"):
+		_cmdtest()
+
+
+func _build_scene(cam_data: Array) -> void:
+	var T := float(Defs.TILE)
+	terrain = TerrainView.new()
+	add_child(terrain)
+	resources = ResourceLayer.new()
+	add_child(resources)
+	light_root = Node2D.new()
+	add_child(light_root)
+	entities = EntityLayer.new()
+	entities.game = self
+	add_child(entities)
+	canvas_mod = CanvasModulate.new()
+	add_child(canvas_mod)
+	camera = CameraController.new()
+	camera.bounds = Rect2(0, 0, sim.world.w * T, sim.world.h * T)
+	add_child(camera)
+	camera.make_current()
+
+	var weather_layer := CanvasLayer.new()
+	weather_layer.layer = 5
+	add_child(weather_layer)
+	weather_overlay = WeatherOverlay.new()
+	weather_overlay.game = self
+	weather_layer.add_child(weather_overlay)
+
+	hud = HUD.new()
+	add_child(hud)
+	hud.setup(self)
+
+	terrain.build(sim.world)
+	for t in terrain.apply_snow(sim):
+		sim.paths.refresh_tile(t)
+	resources.build(sim.world)
+	resources.set_season(sim.time.season())
+	_season_shown = sim.time.season()
+	hud.rebuild_maps()
+	_sync_lights()
+
+	if cam_data.size() >= 3:
+		camera.position = Vector2(float(cam_data[0]), float(cam_data[1]))
+		camera.target_zoom = float(cam_data[2])
+		camera.zoom = Vector2(camera.target_zoom, camera.target_zoom)
+	else:
+		camera.position = sim.world.center_of(sim.colony.home)
+	for e in _pending_events:
+		hud.push_event(e[0], e[1])
+	_pending_events.clear()
+
+
+# ================================================================ choosing the start
+func _begin_picking() -> void:
+	picking = true
+	camera.target_zoom = 0.9
+	camera.position = sim.world.center_of(sim.world.spawn)
+	hud.show_picker(true)
+
+
+## Called for clicks on the world or on a map while choosing a start.
+func try_start_at(t: Vector2i) -> void:
+	var err := sim.start_problem(t)
+	if err != "":
+		hud.push_event(err, "warn")
+		return
+	sim.found_tribes(t, Config.ai_tribes)
+	picking = false
+	hud.show_picker(false)
+	camera.position = sim.world.center_of(t)
+	camera.target_zoom = 2.2
+	hud.rebuild_maps()
+	_sync_lights()
+
+
+func use_suggested_start() -> void:
+	try_start_at(sim.world.spawn)
+
+
+## Clicks on the minimap / world map land here.
+func map_clicked(world_pos: Vector2) -> void:
+	if picking:
+		try_start_at(sim.world.tile_of(world_pos))
+	else:
+		camera.position = world_pos
+
+
+# ================================================================ frame loop
+func _process(delta: float) -> void:
+	if not _ready_done:
+		return
+	var vs := get_viewport_rect().size / camera.zoom
+	view_rect = Rect2(camera.get_screen_center_position() - vs * 0.5, vs)
+	var T := float(Defs.TILE)
+	sim.active_rect = Rect2i(floori(view_rect.position.x / T) - 20, floori(view_rect.position.y / T) - 20,
+		ceili(view_rect.size.x / T) + 40, ceili(view_rect.size.y / T) + 40)
+	hover_tile = sim.world.tile_of(get_global_mouse_position())
+	if build_mode != "":
+		var sz: Vector2i = Defs.BUILDINGS[build_mode]["size"]
+		place_tile = hover_tile - Vector2i(sz.x / 2, sz.y / 2)
+
+	if sim.started and not paused and not menu_paused and sim.colony.population() > 0:
+		var turbo := 1.0
+		for a in _args:
+			if a == "--turbo":
+				turbo = 8.0
+			elif a.begins_with("--turbo="):
+				turbo = float(a.substr(8))
+		var total := minf(delta, 0.1) * speed * turbo
+		if total > 0.0:
+			var steps := ceili(total / MAX_STEP)
+			var dt := total / steps
+			for i in steps:
+				sim.step(dt)
+
+	if sim.time.season() != _season_shown:
+		_on_season_visual()
+	# day/night: hidden (constant daylight) when switched off or when zoomed in close
+	var want := 0.0 if Settings.hide_day_night(camera.zoom.x) else 1.0
+	_light_mix = move_toward(_light_mix, want, delta * 2.0)
+	canvas_mod.color = Color(1, 1, 1).lerp(sim.time.light_color(), _light_mix)
+	# resource sprites fade out when zoomed far out so the map stays readable
+	var z := camera.zoom.x
+	terrain.set_zoom(z)
+	resources.visible = z > 0.55
+	resources.modulate.a = clampf((z - 0.55) / 0.5, 0.0, 1.0)
+	_update_lights()
+	order_marker_t = maxf(0.0, order_marker_t - delta * 1.5)
+	if sim.started and sim.colony.population() == 0:
+		hud.show_game_over()
+
+
+func _on_season_visual() -> void:
+	_season_shown = sim.time.season()
+	for t in terrain.apply_snow(sim):
+		sim.paths.refresh_tile(t)
+	resources.set_season(_season_shown)
+	hud.rebuild_maps()
+
+
+func _on_event(text: String, kind: String) -> void:
+	if hud == null:
+		_pending_events.append([text, kind])
+	else:
+		hud.push_event(text, kind)
+
+
+func _on_tile_changed(t: Vector2i) -> void:
+	if resources != null:
+		resources.tile_changed(t)
+
+
+# ================================================================ lights
+func _sync_lights() -> void:
+	if light_root == null:
+		return
+	var alive_ids := {}
+	for c in sim.colonies:
+		for b in c.buildings:
+			if b.type == "campfire":
+				alive_ids[b.id] = true
+				if not lights.has(b.id):
+					var l := PointLight2D.new()
+					l.texture = Art.light_tex
+					l.texture_scale = 1.3
+					l.color = Color(1.0, 0.7, 0.4)
+					l.position = b.center()
+					l.energy = 0.0
+					light_root.add_child(l)
+					lights[b.id] = l
+	for id in lights.keys():
+		if not alive_ids.has(id):
+			lights[id].queue_free()
+			lights.erase(id)
+
+
+func _update_lights() -> void:
+	var dark := sim.time.darkness() * _light_mix
+	var t := Time.get_ticks_msec() / 1000.0
+	for id in lights.keys():
+		var b := sim.building(int(id))
+		var l: PointLight2D = lights[id]
+		if b == null or not b.is_lit():
+			l.energy = 0.0
+			continue
+		var flicker := 1.0 + sin(t * 9.0 + id) * 0.06 + sin(t * 23.0 + id * 2.0) * 0.04
+		l.energy = (0.25 + dark * 1.1) * flicker
+
+
+# ================================================================ input
+func _unhandled_input(event: InputEvent) -> void:
+	if not _ready_done:
+		return
+	if event is InputEventKey:
+		var k := event as InputEventKey
+		if not k.pressed or k.echo:
+			return
+		if k.shift_pressed and (k.keycode == KEY_PLUS or k.keycode == KEY_EQUAL or k.keycode == KEY_KP_ADD):
+			_cheat_key()
+			return
+		match k.keycode:
+			KEY_ESCAPE:
+				if tool_mode != "":
+					set_tool("")
+				elif build_mode != "":
+					cancel_build()
+				elif hud.worldmap_panel.visible:
+					hud.toggle_worldmap()
+				elif hud.is_panel_open():
+					hud.close_panel()
+				else:
+					hud.toggle_pause_menu()
+			KEY_SPACE:
+				set_speed(0.0 if not paused else speed)
+			KEY_1:
+				set_speed(1.0)
+			KEY_2:
+				set_speed(2.0)
+			KEY_3:
+				set_speed(4.0)
+			KEY_4:
+				set_speed(8.0)
+			KEY_5:
+				set_speed(16.0)
+			KEY_6:
+				set_speed(32.0)
+			KEY_R:
+				if not picking:
+					hud.toggle_panel("research")
+			KEY_B:
+				if not picking:
+					hud.toggle_build_window()
+			KEY_J:
+				if not picking:
+					hud.toggle_panel("jobs")
+			KEY_I:
+				hud.toggle_panel("stock")
+			KEY_C:
+				hud.toggle_panel("colony")
+			KEY_H:
+				hud.toggle_panel("help")
+			KEY_M:
+				hud.toggle_worldmap()
+			KEY_X:
+				if not picking:
+					set_tool("" if tool_mode == "clear" else "clear")
+			KEY_Z:
+				if not picking:
+					hud.toggle_planner()
+			KEY_G:
+				hud.toggle_panel("milestones")
+			KEY_F5:
+				if sim.started and save_slot(0):
+					hud.push_event("Quick-saved to slot 1.", "good")
+			KEY_F9:
+				load_slot(0)
+			KEY_DELETE:
+				demolish_selected()
+		return
+	if menu_paused:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		var gmp := get_global_mouse_position()
+		if tool_mode != "" and mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				clear_start = gmp
+				clear_dragging = true
+			elif clear_dragging:
+				clear_dragging = false
+				if tool_mode == "clear":
+					_apply_clear(clear_rect(), Input.is_key_pressed(KEY_SHIFT))
+				else:
+					_apply_plan(clear_start, gmp)
+			return
+		if tool_mode != "" and mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
+			set_tool("")
+			return
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				if picking:
+					try_start_at(hover_tile)
+				elif build_mode != "":
+					_try_place()
+				else:
+					drag_start = gmp
+					dragging = true
+			elif dragging:
+				dragging = false
+				if drag_start.distance_to(gmp) * camera.zoom.x > 8.0:
+					_box_select(Rect2(drag_start, gmp - drag_start).abs(), Input.is_key_pressed(KEY_SHIFT))
+				else:
+					_select_at(gmp, Input.is_key_pressed(KEY_SHIFT))
+		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
+			if build_mode != "":
+				cancel_build()
+			elif selected_ship_id >= 0:
+				_command_ship(gmp)
+			elif not selected_ids.is_empty():
+				_command(gmp, Input.is_key_pressed(KEY_SHIFT))
+			else:
+				clear_selection()
+
+
+## Shift + Plus five times within two seconds toggles cheat mode.
+func _cheat_key() -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_cheat_presses.append(now)
+	while not _cheat_presses.is_empty() and now - float(_cheat_presses[0]) > 2.0:
+		_cheat_presses.pop_front()
+	if _cheat_presses.size() >= 5:
+		_cheat_presses.clear()
+		sim.toggle_cheats(sim.colony)
+		hud.refresh_build_window()
+
+
+func select_state(st: int) -> void:
+	clear_selection()
+	selected_state = st
+
+
+func select_civ(cid: int) -> void:
+	clear_selection()
+	selected_civ_id = cid
+
+
+func clear_selection() -> void:
+	selected_ids.clear()
+	selected_human_id = -1
+	selected_building_id = -1
+	selected_ship_id = -1
+	selected_civ_id = -1
+	selected_state = -1
+
+
+func set_tool(t: String) -> void:
+	tool_mode = t
+	clear_dragging = false
+	if t != "":
+		cancel_build()
+	if t == "clear":
+		hud.push_event("Clear land: drag a box over trees, bushes, stones or animals. Shift+drag removes marks. Right-click or Esc to stop.", "info")
+
+
+## Tiles of an L-shaped road from a to b (along x first, then y).
+func road_tiles_between(a: Vector2, b: Vector2) -> Array:
+	var t0 := sim.world.tile_of(a)
+	var t1 := sim.world.tile_of(b)
+	var out: Array = []
+	var sx := 1 if t1.x >= t0.x else -1
+	for x in range(t0.x, t1.x + sx, sx):
+		out.append(Vector2i(x, t0.y))
+	var sy := 1 if t1.y >= t0.y else -1
+	for y in range(t0.y + sy, t1.y + sy, sy):
+		out.append(Vector2i(t1.x, y))
+	return out
+
+
+## Applies a zone, road or road-removal drag from the town planner.
+func _apply_plan(a: Vector2, b: Vector2) -> void:
+	var c := sim.colony
+	if tool_mode.begins_with("zone"):
+		var z := int(tool_mode.substr(4))
+		var n := sim.paint_zone(c, sim.world.tile_of(a), sim.world.tile_of(b), z)
+		if z == 0:
+			hud.push_event("Erased %d zoned tiles." % n, "info")
+		elif n > 0:
+			hud.push_event("Painted %d tiles as a %s zone." % [n, Defs.ZONES[z]["name"]], "info")
+	elif tool_mode == "road":
+		var n := sim.plan_road(c, road_tiles_between(a, b))
+		if n > 0:
+			hud.push_event("Planned %d tiles of road. Laborers and builders will lay it (trees in the way get cleared first)." % n, "info")
+	elif tool_mode == "unroad":
+		var n := sim.remove_roads(c, sim.world.tile_of(a), sim.world.tile_of(b))
+		hud.push_event("Removed %d road tiles." % n, "info")
+
+
+## Rectangle of the clearing box being dragged (world pixels).
+func clear_rect() -> Rect2:
+	return Rect2(clear_start, get_global_mouse_position() - clear_start).abs()
+
+
+## Marks every plant and loose stone in the box for clearing (ore deposits stay), and every
+## animal in it for the hunters. Shift removes marks instead.
+func _apply_clear(r: Rect2, remove: bool) -> void:
+	var t0 := sim.world.tile_of(r.position)
+	var t1 := sim.world.tile_of(r.end)
+	var n := 0
+	for y in range(t0.y, t1.y + 1):
+		for x in range(t0.x, t1.x + 1):
+			var q := Vector2i(x, y)
+			if not sim.world.inb(q):
+				continue
+			var i := sim.world.idx(q)
+			var rt := sim.world.res_type[i]
+			if remove:
+				if sim.colony.clear_marks.erase(i):
+					n += 1
+				continue
+			if rt == Defs.R.NONE or (rt >= Defs.R.COPPER_ORE and rt <= Defs.R.IRON_ORE):
+				continue
+			if not sim.colony.clear_marks.has(i):
+				sim.colony.clear_marks[i] = true
+				n += 1
+	var na := 0
+	for a in sim.animals:
+		if a.alive and r.has_point(a.pos):
+			if remove:
+				sim.colony.hunt_marks.erase(a.id)
+			else:
+				sim.colony.hunt_marks[a.id] = true
+				na += 1
+	if remove:
+		hud.push_event("Removed %d clearing marks." % n, "info")
+	elif n + na > 0:
+		var txt := "Marked %d tiles to clear" % n
+		if na > 0:
+			txt += " and %d animals to hunt" % na
+		hud.push_event(txt + ". Woodcutters, gatherers, laborers and builders will see to it.", "info")
+
+
+## The tribe whose camp flag is under the cursor (for diplomacy), or null.
+func _pick_flag(world_pos: Vector2) -> Colony:
+	var k := clampf(1.0 / camera.zoom.x, 0.45, 6.0)
+	for c in sim.colonies:
+		if c.collapsed:
+			continue
+		var base := sim.world.center_of(c.home) + Vector2(-Defs.TILE * 1.5, -Defs.TILE)
+		var top := base + Vector2(0, -34.0 * k)
+		var r := Rect2(top - Vector2(4, 2) * k, Vector2(28.0, 18.0) * k).merge(Rect2(top, Vector2(4.0 * k, 34.0 * k)))
+		if r.has_point(world_pos):
+			return c
+	return null
+
+
+func _pick_human(world_pos: Vector2) -> Human:
+	var best: Human = null
+	var best_d := pow(10.0 / camera.zoom.x + 6.0, 2)
+	for p in sim.people_all:
+		if not p.alive or p.aboard >= 0:
+			continue
+		var d: float = (p.pos + Vector2(0, -3)).distance_squared_to(world_pos)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+
+func _pick_animal(world_pos: Vector2) -> Animal:
+	var best: Animal = null
+	var best_d := pow(12.0 / camera.zoom.x + 6.0, 2)
+	for a in sim.animals:
+		if not a.alive or a.def().get("flying", false):
+			continue
+		var d: float = a.pos.distance_squared_to(world_pos)
+		if d < best_d:
+			best_d = d
+			best = a
+	return best
+
+
+func _pick_ship(world_pos: Vector2) -> Ship:
+	for sh in sim.ships:
+		if sh.pos.distance_to(world_pos) < 14.0 / minf(camera.zoom.x, 1.0) + 6.0:
+			return sh
+	return null
+
+
+func _select_at(world_pos: Vector2, add: bool) -> void:
+	var fc := _pick_flag(world_pos)
+	if fc != null and not add:
+		clear_selection()
+		selected_civ_id = fc.civ_id
+		return
+	var best := _pick_human(world_pos)
+	if not add:
+		clear_selection()
+	if best != null:
+		selected_human_id = best.id
+		if best.civ_id == 0 and not selected_ids.has(best.id):
+			selected_ids.append(best.id)
+		return
+	var sh := _pick_ship(world_pos)
+	if sh != null:
+		selected_ids.clear()
+		selected_ship_id = sh.id
+		return
+	var b := sim.building_at(sim.world.tile_of(world_pos))
+	if b != null:
+		selected_building_id = b.id
+
+
+## Drag a box with the left mouse button to select several of your people.
+func _box_select(r: Rect2, add: bool) -> void:
+	if not add:
+		clear_selection()
+	for p in sim.colony.living():
+		if p.aboard < 0 and r.has_point(p.pos) and not selected_ids.has(p.id):
+			selected_ids.append(p.id)
+	if not selected_ids.is_empty():
+		selected_human_id = selected_ids[0]
+
+
+## Right-click with people selected: move there, board a ship, or (Shift) attack what's under the cursor.
+func _command(world_pos: Vector2, attack: bool) -> void:
+	var people: Array = []
+	for pid in selected_ids:
+		var p := sim.person(int(pid))
+		if p != null and p.alive and p.aboard < 0:
+			people.append(p)
+	if people.is_empty():
+		return
+	if attack:
+		var target_h := _pick_human(world_pos)
+		if target_h != null and target_h.civ_id != 0:
+			for p in people:
+				HumanAI.order_attack(sim, p, "human", target_h.id)
+			_mark_order(target_h.pos, Color(1, 0.3, 0.25))
+			return
+		var target_a := _pick_animal(world_pos)
+		if target_a != null:
+			for p in people:
+				HumanAI.order_attack(sim, p, "animal", target_a.id)
+			_mark_order(target_a.pos, Color(1, 0.3, 0.25))
+			return
+		var target_b := sim.building_at(sim.world.tile_of(world_pos))
+		if target_b != null and target_b.civ_id != 0:
+			for p in people:
+				HumanAI.order_attack(sim, p, "building", target_b.id)
+			_mark_order(target_b.center(), Color(1, 0.3, 0.25))
+			return
+	var sh := _pick_ship(world_pos)
+	if sh != null and sh.civ_id == 0:
+		var boarded := 0
+		for p in people:
+			if HumanAI.order_board(sim, p, sh):
+				boarded += 1
+		_mark_order(sh.pos, Color(0.5, 0.8, 1.0))
+		if boarded < people.size():
+			hud.push_event("The %s only has room for %d." % [sh.label(), sim.ship_capacity(sh)], "warn")
+		return
+	# move in a loose formation around the clicked tile
+	var center := sim.world.tile_of(world_pos)
+	var spots := _formation(center, people.size())
+	for i in people.size():
+		HumanAI.order_move(sim, people[i], spots[i])
+	_mark_order(world_pos, Color(0.5, 1.0, 0.5))
+
+
+func _formation(center: Vector2i, n: int) -> Array:
+	var out: Array = []
+	var r := 0
+	while out.size() < n and r < 12:
+		for oy in range(-r, r + 1):
+			for ox in range(-r, r + 1):
+				if maxi(absi(ox), absi(oy)) != r or out.size() >= n:
+					continue
+				var t := center + Vector2i(ox, oy)
+				if sim.world.walkable(t):
+					out.append(t)
+		r += 1
+	while out.size() < n:
+		out.append(center)
+	return out
+
+
+func _command_ship(world_pos: Vector2) -> void:
+	var sh := sim.ship(selected_ship_id)
+	if sh == null or sh.civ_id != 0:
+		selected_ship_id = -1
+		return
+	var err := sim.sail_to(sh, sim.world.tile_of(world_pos))
+	if err != "":
+		hud.push_event(err, "warn")
+	else:
+		_mark_order(world_pos, Color(0.5, 0.8, 1.0))
+
+
+func _mark_order(at: Vector2, col: Color) -> void:
+	order_marker = at
+	order_marker_col = col
+	order_marker_t = 1.0
+
+
+func select_human(pid: int, focus := false) -> void:
+	clear_selection()
+	selected_human_id = pid
+	var p := sim.person(pid)
+	if p != null and p.civ_id == 0:
+		selected_ids.append(pid)
+	if focus and p != null:
+		camera.position = p.pos
+
+
+func _try_place() -> void:
+	var err := sim.can_place(sim.colony, build_mode, place_tile)
+	if err != "":
+		hud.push_event(err, "warn")
+		return
+	var b := sim.place_building(sim.colony, build_mode, place_tile)
+	if b != null:
+		if b.type == "wall" or b.type == "gate":
+			b.tier = sim.colony.best_wall_tier()
+		hud.push_event("Blueprint placed: %s. Your people will bring %s and build it." % [b.display_name(), Defs.cost_text(b.cost())], "info")
+	if not (build_mode == "fence" or build_mode == "wall" or Input.is_key_pressed(KEY_SHIFT)):
+		cancel_build()
+
+
+# ================================================================ actions used by the HUD
+func set_speed(s: float) -> void:
+	if s <= 0.0:
+		paused = true
+	else:
+		paused = false
+		speed = s
+
+
+func start_build(type: String) -> void:
+	build_mode = type
+	hud.close_panel()
+
+
+func cancel_build() -> void:
+	build_mode = ""
+
+
+func demolish_selected() -> void:
+	if selected_building_id < 0:
+		return
+	var b := sim.building(selected_building_id)
+	if b != null and b.civ_id == 0:
+		sim.demolish(b)
+		hud.push_event("%s demolished." % b.def()["name"], "info")
+	elif b != null:
+		hud.push_event("That belongs to the %s — you can't tear it down." % sim.civ(b.civ_id).name, "warn")
+	selected_building_id = -1
+	_sync_lights()
+
+
+func save_slot(slot: int) -> bool:
+	if not sim.started:
+		return false
+	return SaveSystem.save(slot, sim, camera.position, camera.target_zoom)
+
+
+func load_slot(slot: int) -> void:
+	if SaveSystem.info(slot).is_empty():
+		hud.push_event("Slot %d is empty." % (slot + 1), "warn")
+		return
+	Config.load_game(slot)
+	get_tree().reload_current_scene()
+
+
+func go_main_menu() -> void:
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+
+
+# ================================================================ headless smoke test
+## `godot --headless res://scenes/game.tscn -- --autotest [--turbo] [--loadtest]`
+## Test: jump every tribe to the Bronze Age with an army's worth of people and materials, make
+## the rivals aggressive, and watch walls, weapons, soldiers, wars and raids play out.
+func _setup_wartest() -> void:
+	Config.rules["ai_aggression"] = 3.0
+	for c in sim.colonies:
+		c.era_i = 2
+		c.era = Defs.ERAS[2]
+		for e in [0, 1]:
+			for id in Defs.techs_of_era(e):
+				c.researched[id] = true
+		for id in ["stone_walls", "watch_posts", "statecraft", "cartography", "irrigation"]:
+			c.researched[id] = true
+		c.invalidate_bonus()
+		for k in ["wood", "stone", "sticks", "grass"]:
+			c.add(k, 400)
+		c.add("copper_ore", 40)
+		c.add("tin_ore", 30)
+		c.add("hides", 30)
+		c.add("dried_meat", 300)
+		c.add("water", 30)
+		for k in 8:
+			var pp := sim._make_human(c, "M" if k % 2 == 0 else "F", 20.0 * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2(sim.rng.randf_range(-20, 20), sim.rng.randf_range(-20, 20)))
+			pp.job = "laborer"
+		c.gov_pending = true
+	# everyone knows everyone and dislikes them
+	for a in sim.colonies:
+		for b in sim.colonies:
+			if a.civ_id < b.civ_id:
+				var k: String = sim._key(a.civ_id, b.civ_id)
+				sim.contacts[k] = true
+				sim.relations[k] = -70.0
+
+
+## Soldiers, roads, zones, election influence, deals and milestones: `-- --autotest --dealtest`
+func _deal_test(i: int) -> void:
+	var c := sim.colony
+	if i == 2:
+		c.era_i = 2
+		c.era = Defs.ERAS[2]
+		for e in [0, 1]:
+			for id in Defs.techs_of_era(e):
+				c.researched[id] = true
+		c.invalidate_bonus()
+		c.money = 2000.0
+		for k in ["wood", "stone", "sticks", "hides", "grass"]:
+			c.add(k, 300)
+		for t in ["training_camp", "mercenary_hall", "blacksmith", "house"]:
+			var site := CivAI.find_site(sim, c, t)
+			var b := sim.place_building(c, t, site)
+			if b != null:
+				sim.finish_building(b)
+		for k in 4:
+			sim._make_human(c, "M" if k % 2 == 0 else "F", 25.0 * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2(k * 8, 10))
+		print("DT train problem='", Military.train_problem(c), "'")
+		var w := Military.train(sim, c, "warrior")
+		var a := Military.train(sim, c, "archer")
+		var hw := Military.hire(sim, c, "warrior")
+		var ha := Military.hire(sim, c, "archer")
+		print("DT trained ", w.name, "/", w.soldier_kind, " ", a.name, "/", a.soldier_kind, "  hired ", hw.name, " ", hw.weapon, " | ", ha.name, " ", ha.weapon, " money=", int(c.money))
+		print("DT best weapons: warrior era1=", Defs.best_weapon_for("warrior", 1), " archer era1=", Defs.best_weapon_for("archer", 1), " archer era3=", Defs.best_weapon_for("archer", 3))
+		c.add("short_bow", 1)
+		c.add("flint_axe", 1)
+		# zones & roads
+		var hb: Building = null
+		for b in c.buildings:
+			if b.type == "house":
+				hb = b
+		var n := sim.paint_zone(c, c.home - Vector2i(12, 12), c.home + Vector2i(12, 12), 2)
+		print("DT zone tiles=", n, " house zoned=", hb.zoned if hb != null else "-", " housing=", c.housing())
+		var rt := road_tiles_between(sim.world.center_of(c.home + Vector2i(3, 3)), sim.world.center_of(c.home + Vector2i(15, 9)))
+		print("DT road planned=", sim.plan_road(c, rt), " cost plain vs road=", sim.world.cost_at(c.home + Vector2i(20, 20)))
+		# elections
+		var cands := Elections.preview(sim, c)
+		var pick: Human = cands[cands.size() - 1]
+		c.backed_id = pick.id
+		print("DT forecast before=", Elections.forecast(sim, c), " backing ", pick.name)
+		print("DT rally=", Elections.campaign_talents(sim, c, pick.id), " gifts=", Elections.campaign_gifts(sim, c, pick.id))
+		print("DT forecast after=", Elections.forecast(sim, c))
+		c.rigged = true
+		Elections.hold(sim, c)
+		print("DT leader now ", Elections.leader(sim, c).name, " (backed ", pick.name, ") unrest=", c.in_unrest(), " rigged reset=", not c.rigged)
+		# deals
+		for o in sim.colonies:
+			if o.civ_id != 0:
+				sim.contacts[sim._key(0, o.civ_id)] = true
+				sim.contacts[sim._key(1, o.civ_id)] = true
+				o.add("wood", 200)
+				o.money += 300
+		var t := Deals.make_trade(sim, sim.colonies[1], c)
+		print("DT trade offer: ", t)
+		t["from"] = 1
+		Deals.offer_player(sim, t)
+		sim.relations[sim._key(0, 1)] = 80.0
+		print("DT propose alliance: '", Deals.player_propose(sim, 1, "alliance"), "' allied=", Deals.allied(sim, 0, 1))
+		Deals.make_alliance(sim, 0, 1)
+		sim.relations[sim._key(0, 2)] = -80.0
+		sim.civ(2).era_i = 2
+		print("DT civ2 attacks player: ", sim.declare_war(2, 0), " wars=", sim.wars.keys())
+		print("DT demand tribute from civ3: '", Deals.player_propose(sim, 3, "tribute"), "'")
+		Deals.offer_player(sim, {"from": 3, "type": "tribute", "talents": 50, "want": {}})
+		print("DT deals made=", c.deals_made, " pending=", sim.deal_offers.size())
+	if i >= 3 and i <= 9:
+		var armed := PackedStringArray()
+		for q in c.soldiers():
+			armed.append("%s:%s:%s" % [q.name.substr(0, 5), q.soldier_kind, q.weapon])
+		print("DT t%d roads=%d marks=%d soldiers=%s milestones=%d" % [i, sim.road_tiles.size(), c.road_marks.size(), armed, c.milestones.size()])
+	if i == 10:
+		print("DT milestones: ", c.milestones.keys())
+
+
+## Borders, elections, kin partners and the age cost: `-- --autotest --civtest`
+func _civ_test(i: int) -> void:
+	var c := sim.colony
+	var o: Colony = sim.colonies[1]
+	if i == 2:
+		print("CT age cost era0=", c.era_advance_cost(), " complete=", c.era_complete(), " rp=", c.research_points)
+		for id in Defs.techs_of_era(0):
+			c.researched[id] = true
+		c.research_points = c.era_advance_cost() - 1
+		print("CT can_advance with 1 RP short: ", c.can_advance_era())
+		c.research_points += 1
+		print("CT can_advance: ", c.can_advance_era(), " -> ", c.advance_era(), " rp left=", c.research_points, " era=", c.era)
+		# a rival's state right next to ours, then walk a Billy in
+		var home_s := sim.states.at(c.home)
+		var nb: int = int((sim.states.neighbors[home_s] as Dictionary).keys()[0])
+		sim.states.set_owner(nb, o.civ_id)
+		sim.contacts[sim._key(0, o.civ_id)] = true
+		var p: Human = c.living()[0]
+		var dest := sim.paths.open_near(sim.states.centers[nb], 3)
+		# make sure someone of theirs is there to see it
+		var watcher: Human = o.living()[0]
+		watcher.pos = sim.world.center_of(dest) + Vector2(20, 0)
+		print("CT trespass: walking ", p.name, " into ", sim.states.names[nb], " access=", Borders.has_access(sim, 0, o.civ_id), " war chance=", Borders.war_chance(sim, 0, o.civ_id), " order=", HumanAI.order_move(sim, p, dest))
+		# AI asks the player (auto-answered yes in tests), AI asks AI
+		Borders.request(sim, o.civ_id, 0)
+		Borders.request(sim, 2, o.civ_id)
+		print("CT access 1>0=", Borders.has_access(sim, o.civ_id, 0), " 2>1=", Borders.has_access(sim, 2, o.civ_id), " grant chance=", Borders.grant_chance(sim, 2, o.civ_id))
+		# a job path into foreign land is refused
+		var q: Human = c.living()[1]
+		q.task = {"type": "harvest", "prio": HumanAI.PRIO_JOB}
+		print("CT job path into their land allowed=", HumanAI._go(sim, q, dest))
+		q.task = {}
+		q.path = []
+		Borders.revoke(sim, 0, o.civ_id)
+		sim.access_denied["0>%d" % o.civ_id] = 1e9
+	if i >= 3 and i <= 12:
+		var p: Human = c.living()[0]
+		var w2: Human = o.living()[0]
+		var nb2: int = int(sim.claims_in_progress.get(-99, -1))
+		for st in sim.states.owned_by(o.civ_id):
+			if (sim.states.neighbors[sim.states.at(c.home)] as Dictionary).has(st):
+				nb2 = st
+		if nb2 >= 0 and i % 3 == 0:
+			p.pos = sim.world.center_of(sim.paths.open_near(sim.states.centers[nb2], 3))
+			p.task_memory.erase("tres")
+			sim.trespass_cd.clear()
+		w2.pos = p.pos + Vector2(30, 0)
+		Borders.check_trespass(sim)
+		print("CT   %s at %s (state %s) tres=%s wars=%s" % [p.name, sim.world.tile_of(p.pos), sim.states.names[sim.states.at(sim.world.tile_of(p.pos))], p.task_memory.get("tres", -1), sim.wars.keys()])
+	if i == 14:
+		# elections: an early vote, then the Bronze Age forces a presidential one
+		c.next_election = 0.0
+		Elections.update(sim, c)
+		c.era_i = 2
+		c.era = Defs.ERAS[2]
+		Elections.update(sim, c)
+		for k in 3:
+			Elections.hold(sim, c)
+		print("CT leader ", c.leader_title, " ", Elections.leader(sim, c).name, " terms=", c.leader_terms, " fx=", c.leader_fx, " last=", c.last_election)
+		# kin partners: siblings may pair
+		var kids := 0
+		var sib_a: Human = null
+		var sib_b: Human = null
+		for pp in c.living():
+			for qq in c.living():
+				if pp != qq and pp.gender != qq.gender and Survival.related(pp, qq):
+					sib_a = pp
+					sib_b = qq
+		print("CT related pair found=", sib_a != null, " allow_kin=", Config.rule("allow_kin"))
+		# leader dies -> new election
+		var ld := Elections.leader(sim, c)
+		sim.kill(ld, "test")
+		Elections.update(sim, c)
+		print("CT after death: ", c.leader_title, " ", Elections.leader(sim, c).name if Elections.leader(sim, c) != null else "-")
+
+
+func _feature_test(i: int) -> void:
+	var c := sim.colony
+	if i == 2:
+		print("FT states: total ", sim.states.count(), " mine ", sim.states.owned_by(0).map(func(x): return sim.states.names[x]), " limit ", sim.state_limit(c))
+		print("FT years in era %.2f needed %.1f  date %s  cal_years %.2f" % [c.years_in_era(), c.years_needed(), sim.time.date_text(), sim.time.cal_years()])
+		# claim a free neighbouring state
+		for st in sim.states.count():
+			if sim.claim_problem(0, st) == "":
+				var who: Human = c.living()[0]
+				print("FT claim ", sim.states.names[st], " ok=", HumanAI.order_claim(sim, who, st))
+				break
+	if i == 4:
+		for k in 5:
+			_cheat_key()
+		var b := sim.place_building(c, "monolith", CivAI.find_site(sim, c, "monolith"))
+		print("FT cheat=", c.cheat, " techs=", c.researched.size(), "/", Defs.TECH_ORDER.size(), " monolith built=", b != null and b.built, " can_advance=", c.can_advance_era())
+		for k in 5:
+			_cheat_key()
+		print("FT cheat after second code=", c.cheat, " can_advance=", c.can_advance_era())
+		c.knowledge = 12000.0
+		print("FT skip 10: '", sim.skip_years(c, 10), "' date ", sim.time.date_text(), " kp ", c.knowledge, " years_in_era %.1f" % c.years_in_era())
+	if i == 12 or i == 20 or i == 30:
+		print("FT %d: mine %s claims %s owners %s" % [i, sim.states.owned_by(0).map(func(x): return sim.states.names[x]), sim.claims_in_progress, Array(sim.states.owners).filter(func(o): return o >= 0).size()])
+
+
+var _raid_target: Colony
+var _raider: Colony
+var _raid_squad: Array = []
+var _gate_id := -1
+func _raid_setup() -> void:
+	var best_d := 1e9
+	for a in sim.colonies:
+		for o in sim.colonies:
+			if o != a and sim.land_reachable(a, o):
+				var d := Vector2(o.home).distance_to(Vector2(a.home))
+				if d < best_d:
+					best_d = d
+					_raid_target = o
+					_raider = a
+	if _raid_target == null:
+		print("RAID: no reachable target")
+		return
+	for k in 8:
+		var pp := sim._make_human(_raider, "M", 22.0 * Defs.AGE_YEAR_DAYS, sim.world.center_of(_raider.home))
+		pp.job = "soldier"
+		pp.weapon = ["bronze_sword", "bronze_spear", "bow"][k % 3]
+		pp.skills = {"soldier": 5.0}
+		pp.health = 100.0
+	sim.declare_war(_raider.civ_id, _raid_target.civ_id)
+	var sol: Array = _raider.soldiers()
+	var wall: Building = null
+	for b in _raid_target.buildings:
+		if b.type == "gate" and b.built:
+			wall = b
+	for k in sol.size():
+		if k < 3 and wall != null:
+			sol[k].pos = sim.world.center_of(wall.tile) + Vector2(-60, 0)
+			HumanAI.order_attack(sim, sol[k], "building", wall.id)
+			_raid_squad.append(sol[k])
+	for q in _raid_squad:
+		q.health = 100000.0
+	sim.test_no_peace = true
+	_raider.auto_jobs = false
+	_gate_id = wall.id if wall != null else -1
+	print("RAID: gate target ", _gate_id)
+	print("RAID: %s attacking %s dist %d" % [_raider.name, _raid_target.name, int(best_d)])
+
+
+func _raid_report(i: int) -> void:
+	if _raid_target == null:
+		return
+	var states := {}
+	for q in _raider.soldiers():
+		states[q.state.substr(0, 26)] = int(states.get(q.state.substr(0, 26), 0)) + 1
+	var gates := 0
+	for b in _raid_target.buildings:
+		if b.type == "gate":
+			gates += 1
+	var gt: Building = sim.building(_gate_id)
+	print("gates left ", gates, " gate hp ", gt.cur_hp() if gt != null else -1.0)
+	for q in _raid_squad:
+		var tp: Vector2 = HumanAI._target_pos(sim, str(q.task.get("kind", "")), int(q.task.get("target", -1))) if q.task.has("kind") else Vector2.ZERO
+		print("   squad %s alive=%s job=%s task=%s kind=%s tgt=%s dist=%.0f path=%d prio=%s" % [q.name, q.alive, q.job, q.task.get("type", "-"), q.task.get("kind", "-"), q.task.get("target", "-"), tp.distance_to(q.pos) / 16.0, q.path.size(), q.task.get("prio", "-")])
+	print("RAID %d: target pop %d buildings %d | raider soldiers %d %s | wars %s" % [i, _raid_target.population(), _raid_target.buildings.size(), _raider.soldiers().size(), states, sim.wars.keys()])
+
+
+func _wartest_report(i: int) -> void:
+	var line := "WAR %d:" % i
+	for c in sim.colonies:
+		var walls := 0
+		var wb := 0
+		for b in c.buildings:
+			if b.type == "wall" or b.type == "gate":
+				if b.built:
+					walls += 1
+				else:
+					wb += 1
+		var armed := 0
+		for q in c.soldiers():
+			if q.weapon != "":
+				armed += 1
+		line += " %s[p%d sol%d arm%d wpn%d walls%d/%d b%d gov=%s str%d]" % [c.name.substr(0, 4), c.population(), c.soldiers().size(), armed, c.weapons_in_stock(), walls, wb, c.buildings.size(), c.government.substr(0, 4), int(sim.military_strength(c))]
+	print(line, " wars=", sim.wars.keys(), " clears=", sim.colony.clear_marks.size(), " prof=", sim.prof)
+	sim.prof.clear()
+	var jobs := {}
+	for q in sim.colonies[1].living():
+		jobs[q.job] = int(jobs.get(q.job, 0)) + 1
+	var bs: Building = null
+	for b in sim.colonies[1].buildings:
+		if b.type == "blacksmith":
+			bs = b
+	print("    civ1 jobs=", jobs, " blacksmith=", (("built=%s craft=%s auto=%s" % [bs.built, bs.craft, bs.auto_craft]) if bs != null else "none"), " soldiers_allowed=", sim.colonies[1].job_allowed("soldier"))
+	for q in sim.colony.living().slice(0, 0):
+		var dp := sim.colony.drop_point(q.pos)
+		print("    %s thirst=%.0f hunger=%.0f task=%s prio=%s state=%s path=%d  tile=%s dp=%s pathlen=%d solid_here=%s water=%d" % [q.name, q.thirst, q.hunger, q.task.get("type", "-"), q.task.get("prio", "-"), q.state, q.path.size(), sim.world.tile_of(q.pos), dp, sim.paths.find_path(sim.world.tile_of(q.pos), dp).size(), sim.paths.astar.is_point_solid(sim.world.tile_of(q.pos)), int(sim.colony.count("water"))])
+
+
+func _autotest() -> void:
+	sim.event.connect(func(t, k): print("  [EVENT] ", t))
+	sim.debug_log = true
+	if picking:
+		use_suggested_start()
+	set_speed(8.0)
+	print("tribes: ", sim.colonies.size())
+	var secs := 60
+	for a in _args:
+		if a.begins_with("--secs="):
+			secs = int(a.substr(7))
+	if _args.has("--wartest"):
+		_setup_wartest()
+	for i in secs:
+		await get_tree().create_timer(1.0).timeout
+		CivAI.auto_research(sim, sim.colony)
+		if _args.has("--wartest"):
+			_wartest_report(i)
+		if _args.has("--featuretest"):
+			_feature_test(i)
+		if _args.has("--civtest"):
+			_civ_test(i)
+		if _args.has("--dealtest"):
+			_deal_test(i)
+		if _args.has("--raidtest") and i == 2:
+			_raid_setup()
+		if _args.has("--raidtest") and i > 2:
+			_raid_report(i)
+		for cc2 in sim.colonies:
+			for q in cc2.living():
+				if q.aboard < 0 and not sim.world.walkable(sim.world.tile_of(q.pos)):
+					print("   IN WATER %s civ%d task=%s/%s state=%s tile=%s" % [q.name, q.civ_id, q.task.get("type", "-"), q.task.get("dest", "-"), q.state, sim.world.tile_of(q.pos)])
+		if i % 5 != 0:
+			continue
+		var line := "%s |" % sim.time.date_text().substr(0, 6)
+		for c in sim.colonies:
+			var built := 0
+			for b in c.buildings:
+				if b.built:
+					built += 1
+			line += " %s: p%d f%.0f b%d e%d r%d kp%d rp%d $%d |" % [c.name.substr(0, 5), c.population(), c.food_units(), built, c.era_i, c.researched.size(), int(c.knowledge), int(c.research_points), int(c.money)]
+		print(line)
+		var gov := "   leaders:"
+		for c in sim.colonies:
+			var ld := Elections.leader(sim, c)
+			gov += " %s=%s %s(t%d, next %.1f)" % [c.name.substr(0, 5), c.leader_title, ld.name if ld != null else "-", c.leader_terms, c.next_election]
+		print(gov, "  access=", sim.access.size(), " denied=", sim.access_denied.size(), " wars=", sim.wars.keys(), " fx=", sim.fx.size(), " yr=%.2f" % sim.time.cal_years())
+		var dbg := ""
+		for b in sim.colony.buildings:
+			dbg += "%s%s " % [b.type.substr(0, 6), "" if b.built else "*"]
+			if b.type == "research_table":
+				dbg += "(stored %.0f) " % b.stored
+		var jobs := {}
+		for p in sim.colony.living():
+			jobs[p.job] = int(jobs.get(p.job, 0)) + 1
+		var cc := sim.colony
+		print("   player: ", dbg, jobs, " want=", cc.want_build, " stock w%d s%d st%d g%d cu%d sn%d fe%d" % [int(cc.count("wood")), int(cc.count("sticks")), int(cc.count("stone")), int(cc.count("grass")), int(cc.count("copper_ore")), int(cc.count("tin_ore")), int(cc.count("iron_ore"))], " ore_need=", cc.ore_needed())
+		if i == 30:
+			print("save ok: ", save_slot(2))
+		if i == 20 and _args.has("--tradetest"):
+			for tc in sim.colonies:
+				if sim.trade_partners(tc).is_empty():
+					continue
+				for q in tc.living():
+					if q.is_adult():
+						q.job = "trader"
+						tc.auto_jobs = false
+						tc.add("wood", 60)
+						tc.add("hides", 20)
+						print("   TRADER: ", q.name, " of ", tc.name, " partners=", sim.trade_partners(tc).map(func(o): return o.name))
+						break
+				break
+		if _args.has("--tradetest") and i % 10 == 0:
+			for tc in sim.colonies:
+				for q in tc.living():
+					if q.job == "trader":
+						print("   trader %s: %s carrying=%s money=%d log=%s wood=%d short=%d hides=%d fd=%.1f" % [q.name, q.state, q.carrying, int(tc.money), tc.trade_log.slice(-2), int(tc.count("wood")), int(tc.shortfall("wood")), int(tc.count("hides")), tc.food_days()])
+	var jobs := {}
+	for p in sim.colony.living():
+		jobs[p.job] = int(jobs.get(p.job, 0)) + 1
+	print("player jobs: ", jobs)
+	print("AUTOTEST DONE")
+	get_tree().quit()
+
+
+## Renders screenshots for visual checks: `godot res://scenes/game.tscn -- --shots`
+func _shots() -> void:
+	var dir := "/tmp/shots"
+	DirAccess.make_dir_recursive_absolute(dir)
+	use_suggested_start()
+	set_speed(8.0)
+	for i in 6:
+		await get_tree().create_timer(1.0).timeout
+	sim.time.t = floorf(sim.time.t) + 1.45
+	var c := sim.colony
+	# showcase: one of each building, finished, plus a blueprint and a ship
+	for t in ["shelter", "storage", "research_table", "granary", "stone_hut", "house", "well", "workshop", "healer_hut", "stone_house", "watchtower"]:
+		var site := CivAI.find_site(sim, c, t)
+		if site.x >= 0:
+			var b := sim.place_building(c, t, site)
+			if b != null:
+				sim.finish_building(b)
+	var bp := sim.place_building(c, "house", CivAI.find_site(sim, c, "house"))
+	if bp != null:
+		bp.delivered = {"wood": 12}
+	var sea_t := sim._nearest_sea(c.home, 30)
+	selected_ship_id = 101
+	if sea_t.x >= 0:
+		for k in 3:
+			var sh := Ship.new()
+			sh.id = 100 + k
+			sh.kind = k
+			sh.pos = sim.world.center_of(sim._nearest_sea(c.home + Vector2i(k * 3, k * 2), 30))
+			sh.heading = 0.4 * k
+			sh.name = "Test"
+			ships_demo(sh)
+	set_speed(0.0)
+	camera.position = sim.world.center_of(c.home)
+	for p in c.living():
+		selected_ids.append(p.id)
+	dragging = true
+	drag_start = sim.world.center_of(c.home) + Vector2(-60, -40)
+	await _snap(dir + "/1_village_stone.png", 2.4)
+	dragging = false
+	c.era_i = 3
+	await _snap(dir + "/2_village_iron.png", 2.4)
+	if sea_t.x >= 0:
+		camera.position = sim.world.center_of(sea_t)
+		await _snap(dir + "/3_ships.png", 2.4)
+	camera.position = sim.world.center_of(c.home)
+	await _snap(dir + "/4_far_icons.png", 0.4)
+	await _snap(dir + "/6_terrain_far.png", 0.15)
+	await _snap(dir + "/7_terrain_mid.png", 0.8)
+	var desert := sim.world.find_nearest(c.home, 200, func(q: Vector2i) -> bool:
+		return sim.world.t_at(q) == Defs.T.DESERT or sim.world.t_at(q) == Defs.T.HIGH_DESERT or sim.world.t_at(q) == Defs.T.SAVANNA)
+	if desert.x >= 0:
+		camera.position = sim.world.center_of(desert)
+		await _snap(dir + "/8_desert.png", 1.2)
+		camera.position = sim.world.center_of(c.home)
+	c.era_i = 1
+	c.era = Defs.ERAS[1]
+	for id in Defs.techs_of_era(0):
+		c.researched[id] = true
+	for id in ["pottery", "boatbuilding"]:
+		if Defs.TECHS.has(id):
+			c.researched[id] = true
+	c.knowledge = 3420.0
+	c.research_points = 7.0
+	c.research_stock = {"wood": 12.0, "bones": 4.0, "copper_ore": 2.0}
+	hud.toggle_panel("research")
+	await _snap(dir + "/5_research.png", 1.6)
+	hud.close_panel()
+	hud.toggle_build_window()
+	await _snap(dir + "/5b_build_window.png", 1.6)
+	hud.close_panel()
+	hud._open_settings()
+	await _snap(dir + "/5c_settings.png", 1.6)
+	hud.close_panel()
+	await _military_shots(dir)
+	print("SHOTS DONE")
+	get_tree().quit()
+
+
+## Bronze Age showcase: walls and gates, blacksmith, training camp, capitol, armed soldiers,
+## a war with a rival, the territory map, diplomacy and the government choice.
+func _military_shots(dir: String) -> void:
+	var c := sim.colony
+	c.era_i = 2
+	c.era = Defs.ERAS[2]
+	for e in [0, 1]:
+		for id in Defs.techs_of_era(e):
+			c.researched[id] = true
+	for id in ["stone_walls", "watch_posts", "statecraft", "cartography"]:
+		c.researched[id] = true
+	c.invalidate_bonus()
+	for k in ["wood", "stone", "sticks", "grass"]:
+		c.add(k, 500)
+	c.add("copper_ore", 40)
+	c.add("tin_ore", 30)
+	for t in ["blacksmith", "training_camp", "capitol", "map_table"]:
+		var site := CivAI.find_site(sim, c, t)
+		if site.x >= 0:
+			var b := sim.place_building(c, t, site)
+			if b != null:
+				sim.finish_building(b)
+	# a squad of soldiers with bronze-age arms
+	var weapons := ["bronze_sword", "bronze_spear", "bow", "bronze_spear", "stone_spear", "sling"]
+	for k in 6:
+		var pp := sim._make_human(c, "M" if k % 2 == 0 else "F", 22.0 * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2(k * 9 - 24, 26))
+		pp.job = "soldier"
+		pp.weapon = weapons[k]
+		pp.skills = {"soldier": 4.0}
+	c.wall_ring = 10
+	for q in CivAI._ring(c.home, 10):
+		if sim.world.inb(q) and sim.world.res_type[sim.world.idx(q)] != Defs.R.NONE:
+			sim.world.res_type[sim.world.idx(q)] = Defs.R.NONE
+			sim.world.res_amount[sim.world.idx(q)] = 0
+			sim.paths.refresh_tile(q)
+			_on_tile_changed(q)
+	selected_ship_id = -1
+	for k in 40:
+		CivAI.plan_defenses(sim, c)
+		for b in c.buildings:
+			if not b.built and (b.type == "wall" or b.type == "gate"):
+				sim.finish_building(b)
+	var foe: Colony = sim.colonies[1] if sim.colonies.size() > 1 else null
+	if foe != null:
+		sim.contacts[sim._key(0, foe.civ_id)] = true
+		sim.declare_war(0, foe.civ_id)
+		for k in 3:
+			var ep := sim._make_human(foe, "M", 22.0 * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2(150 + k * 10, -30))
+			ep.job = "soldier"
+			ep.weapon = "stone_club"
+	c.government = "monarchy"
+	camera.position = sim.world.center_of(c.home)
+	set_speed(1.0)
+	for k in 20:
+		await get_tree().process_frame
+	await _snap(dir + "/9_walls_army.png", 1.3)
+	await _snap(dir + "/10_walls_far.png", 0.6)
+	# diplomacy panel for the enemy
+	if foe != null:
+		clear_selection()
+		selected_civ_id = foe.civ_id
+		hud._refresh_info()
+		await _snap(dir + "/11_diplomacy.png", 1.3)
+	clear_selection()
+	# territory map
+	hud.toggle_worldmap()
+	hud._on_territory_toggle()
+	for k in 10:
+		await get_tree().process_frame
+	await _snap(dir + "/12_territory.png", 1.3)
+	hud.worldmap.set_zoom(3.0, hud.worldmap.size * 0.5)
+	hud.worldmap.map_center = (Vector2(c.home) + Vector2(0.5, 0.5)) / float(sim.world.w)
+	hud.worldmap._clamp_center()
+	await _snap(dir + "/12b_territory_zoomed.png", 1.3)
+	hud.worldmap.reset_view()
+	hud.toggle_worldmap()
+	# clearing marks
+	tool_mode = "clear"
+	var t0 := sim.world.tile_of(sim.world.center_of(c.home) + Vector2(-260, -200))
+	_apply_clear(Rect2(sim.world.center_of(t0), Vector2(160, 110)), false)
+	camera.position = sim.world.center_of(t0) + Vector2(80, 55)
+	await _snap(dir + "/13_clear_marks.png", 1.6)
+	tool_mode = ""
+	camera.position = sim.world.center_of(c.home)
+	# government choice
+	c.government = ""
+	c.gov_pending = true
+	hud._show_gov_dialog()
+	await _snap(dir + "/14_government.png", 1.3)
+	hud.gov_layer.visible = false
+	c.gov_pending = false
+	c.government = "monarchy"
+	# a brawl up close: soldiers against raiders, with combat effects; FPS counter on
+	Settings.show_fps = true
+	var spot := sim.world.center_of(c.home) + Vector2(40, 60)
+	var mine: Array = []
+	var theirs: Array = []
+	for k in 4:
+		var a := sim._make_human(c, "M", 24.0 * Defs.AGE_YEAR_DAYS, spot + Vector2(-14, k * 10 - 15))
+		a.job = "soldier"
+		a.weapon = ["bronze_sword", "bronze_spear", "stone_club", "bronze_sword"][k]
+		mine.append(a)
+		if foe != null:
+			var b := sim._make_human(foe, "M", 24.0 * Defs.AGE_YEAR_DAYS, spot + Vector2(14, k * 10 - 15))
+			b.job = "soldier"
+			b.weapon = "stone_club"
+			b.health = 400.0
+			theirs.append(b)
+	for k in mine.size():
+		if k < theirs.size():
+			HumanAI.order_attack(sim, mine[k], "human", theirs[k].id)
+			HumanAI.order_attack(sim, theirs[k], "human", mine[k].id)
+	# and a wolf after a hunter
+	var wolf_pos := spot + Vector2(0, 70)
+	var hunter := sim._make_human(c, "F", 24.0 * Defs.AGE_YEAR_DAYS, wolf_pos + Vector2(-12, 0))
+	hunter.job = "hunter"
+	var w := Animal.new()
+	w.id = sim.next_animal_id
+	sim.next_animal_id += 1
+	w.species = "wolf"
+	w.pos = wolf_pos + Vector2(10, 0)
+	w.health = 300.0
+	sim.animals.append(w)
+	sim.refresh_predators()
+	w.prey_id = hunter.id
+	w.prey_is_human = true
+	w.state = "chase"
+	camera.position = spot + Vector2(0, 20)
+	camera.target_zoom = 3.4
+	camera.zoom = Vector2(3.4, 3.4)
+	set_speed(1.0)
+	for k in 150:
+		await get_tree().process_frame
+		if k > 60 and sim.fx.size() >= 8:
+			break
+	get_viewport().get_texture().get_image().save_png(dir + "/15_fight.png")
+	print("saved fight, fx=", sim.fx.size())
+	for k in 25:
+		await get_tree().process_frame
+	get_viewport().get_texture().get_image().save_png(dir + "/15b_fight.png")
+	# frozen mid-animation samples of every effect, for a visual check
+	set_speed(0.0)
+	sim.fx.clear()
+	var base := spot + Vector2(-60, 40)
+	var styles := ["slash", "pierce", "blunt", "bite"]
+	for k in 4:
+		var at := base + Vector2(k * 34, 0)
+		Fx.hit(sim, at, at + Vector2(-12, 0), 14.0, styles[k], true, Color(0.95, 0.7, 0.35))
+	Fx.miss(sim, base + Vector2(0, 40), base + Vector2(-12, 40))
+	Fx.smash(sim, base + Vector2(60, 40), base + Vector2(40, 40))
+	for e in sim.fx:
+		e["dur"] = float(e["dur"]) * 40.0
+		e["t0"] = Fx.now() - float(e["dur"]) * 0.3
+	camera.position = base + Vector2(50, 20)
+	camera.zoom = Vector2(4.5, 4.5)
+	camera.target_zoom = 4.5
+	for k in 3:
+		await get_tree().process_frame
+	get_viewport().get_texture().get_image().save_png(dir + "/15c_fx_samples.png")
+	sim.fx.clear()
+	# rivals asking to cross
+	if foe != null:
+		sim.make_peace(0, foe.civ_id)
+		sim.access_asks.append(foe.civ_id)
+	for k in 4:
+		await get_tree().process_frame
+	await _snap(dir + "/16_passage.png", 2.6)
+	sim.access_asks.clear()
+	# --- town plan: zones and roads around the village, the planner palette
+	c.money = 900.0
+	var hall_site := CivAI.find_site(sim, c, "mercenary_hall")
+	var hall := sim.place_building(c, "mercenary_hall", hall_site)
+	if hall != null:
+		sim.finish_building(hall)
+	sim.paint_zone(c, c.home + Vector2i(-9, -7), c.home + Vector2i(-2, 2), 2)
+	sim.paint_zone(c, c.home + Vector2i(2, -7), c.home + Vector2i(9, 0), 3)
+	sim.paint_zone(c, c.home + Vector2i(-9, 4), c.home + Vector2i(9, 9), 1)
+	var rd := road_tiles_between(sim.world.center_of(c.home + Vector2i(-12, 2)), sim.world.center_of(c.home + Vector2i(12, -6)))
+	rd.append_array(road_tiles_between(sim.world.center_of(c.home + Vector2i(0, 2)), sim.world.center_of(c.home + Vector2i(0, 12))))
+	for q in rd:
+		if sim.road_ok(q):
+			var ri := sim.world.idx(q)
+			sim.world.res_type[ri] = Defs.R.NONE
+			_on_tile_changed(q)
+			sim.lay_road(c, ri)
+	sim.plan_road(c, road_tiles_between(sim.world.center_of(c.home + Vector2i(12, -6)), sim.world.center_of(c.home + Vector2i(18, -14))))
+	hud.toggle_planner()
+	camera.position = sim.world.center_of(c.home)
+	await _snap(dir + "/18_town_plan.png", 1.5)
+	hud.toggle_planner()
+	# --- mercenary hall info with hire buttons
+	if hall != null:
+		clear_selection()
+		selected_building_id = hall.id
+		camera.position = hall.center()
+		hud._refresh_info()
+		await _snap(dir + "/19_mercenary_hall.png", 2.4)
+		Military.hire(sim, c, "archer")
+		Military.hire(sim, c, "warrior")
+	clear_selection()
+	# --- milestones panel
+	hud.toggle_panel("milestones")
+	await _snap(dir + "/20_milestones.png", 1.5)
+	# --- colony panel: election influence
+	for k in 4:
+		sim._make_human(c, "F" if k % 2 == 0 else "M", (30.0 + k * 9.0) * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2(k * 7, 4))
+	var cands := Elections.preview(sim, c)
+	if cands.size() > 1:
+		c.backed_id = cands[1].id
+		c.campaign[cands[1].id] = 3.0
+	hud.toggle_panel("colony")
+	await _snap(dir + "/21_election.png", 1.5)
+	hud.close_panel()
+	# --- a deal card
+	if foe != null:
+		var o2: Colony = sim.colonies[2] if sim.colonies.size() > 2 else foe
+		sim.contacts[sim._key(0, o2.civ_id)] = true
+		sim.debug_log = false
+		Deals.offer_player(sim, {"from": o2.civ_id, "type": "tribute", "talents": 60, "want": {}})
+		await _snap(dir + "/22_deal_card.png", 1.5)
+		sim.deal_offers.clear()
+		clear_selection()
+		selected_civ_id = foe.civ_id
+		hud._refresh_info()
+		await _snap(dir + "/23_diplomacy_actions.png", 1.5)
+		clear_selection()
+	await _snap(dir + "/17_far_names.png", 0.45)
+
+
+func ships_demo(sh: Ship) -> void:
+	sim.ships.append(sh)
+
+
+func _snap(path: String, z: float) -> void:
+	set_speed(0.0)
+	camera.target_zoom = z
+	camera.zoom = Vector2(z, z)
+	for i in 6:
+		await get_tree().process_frame
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+## Scripted check of blueprints, harbor, ships, boarding, sailing and attack orders.
+func _cmdtest() -> void:
+	sim.event.connect(func(t, k): print("  [EVENT] ", t))
+	# start on a coast
+	var coast := sim.world.find_nearest(sim.world.spawn, 120, func(q: Vector2i) -> bool:
+		return sim.start_problem(q) == "" and sim.dock_tile_for(q + Vector2i(3, 0), Vector2i(2, 2)).x >= 0 and sim.can_place(null, "harbor", q + Vector2i(3, 0)) == "")
+	print("coast start: ", coast)
+	try_start_at(coast)
+	var c := sim.colony
+	c.auto_build = false
+	c.researched["boatbuilding"] = true
+	c.invalidate_bonus()
+	for k in ["wood", "stone", "sticks", "grass"]:
+		c.add(k, 120.0)
+	var b := sim.place_building(c, "harbor", coast + Vector2i(3, 0))
+	print("harbor blueprint: ", b != null, " needs ", b.needs())
+	set_speed(8.0)
+	for i in 120:
+		await get_tree().create_timer(0.5).timeout
+		if b.built:
+			break
+	print("harbor built: ", b.built, " delivered ", b.delivered)
+	print("order canoe: '", sim.order_ship(c, b, 0), "'")
+	for i in 120:
+		await get_tree().create_timer(0.5).timeout
+		if not sim.ships.is_empty():
+			break
+	print("ships: ", sim.ships.size())
+	if sim.ships.is_empty():
+		get_tree().quit()
+		return
+	var sh: Ship = sim.ships[0]
+	var people := c.living().filter(func(p): return p.is_adult())
+	for p in people:
+		print("  board ", p.name, ": ", HumanAI.order_board(sim, p, sh))
+	set_speed(1.0)
+	for i in 240:
+		await get_tree().process_frame
+		if sh.passengers.size() >= people.size():
+			break
+	print("aboard: ", sh.passengers.size())
+	# find land on another landmass: a land tile far away whose nearby sea is reachable
+	var far := Vector2i(-1, -1)
+	for attempt in 3000:
+		var q := Vector2i(sim.rng.randi_range(10, sim.world.w - 10), sim.rng.randi_range(10, sim.world.h - 10))
+		if Vector2(q).distance_to(Vector2(coast)) > 60 and sim.world.walkable(q) and sim._nearest_sea(q, 3).x >= 0 \
+				and sim.paths.astar.get_id_path(coast, q, false).is_empty():
+			far = q
+			break
+	print("far shore (other landmass): ", far)
+	print("sail: '", sim.sail_to(sh, far), "' path ", sh.path.size())
+	for i in 200:
+		await get_tree().create_timer(0.5).timeout
+		if sh.path.is_empty():
+			break
+	await get_tree().create_timer(1.0).timeout
+	print("after voyage: aboard ", sh.passengers.size(), " ship at ", sim.world.tile_of(sh.pos))
+	for p in people:
+		print("  ", p.name, " at ", sim.world.tile_of(p.pos), " dist to far ", Vector2(sim.world.tile_of(p.pos)).distance_to(Vector2(far)), " state ", p.state)
+	# attack the nearest animal
+	var p0: Human = people[0]
+	var prey: Animal = null
+	var bd := 1e18
+	for a in sim.animals:
+		if a.alive and a.def()["huntable"] and a.pos.distance_squared_to(p0.pos) < bd:
+			bd = a.pos.distance_squared_to(p0.pos)
+			prey = a
+	print("attack ", prey.species, " at dist ", sqrt(bd) / 16.0, ": ", HumanAI.order_attack(sim, p0, "animal", prey.id))
+	for i in 80:
+		await get_tree().create_timer(0.5).timeout
+		if not prey.alive:
+			break
+	print("prey dead: ", not prey.alive, " attacker hp ", int(p0.health))
+	# move order far away (pathing check)
+	var dest := sim.world.tile_of(p0.pos) + Vector2i(25, 18)
+	print("move order: ", HumanAI.order_move(sim, p0, dest))
+	for i in 80:
+		await get_tree().create_timer(0.5).timeout
+		if str(p0.task.get("type", "")) == "order" and not p0.task.get("moving", false):
+			break
+	print("moved to ", sim.world.tile_of(p0.pos), " target ", dest, " state ", p0.state)
+	print("CMDTEST DONE")
+	get_tree().quit()
