@@ -28,7 +28,7 @@ static func update(sim: Sim, p: Human, dt: float) -> void:
 
 
 static func _update(sim: Sim, p: Human, dt: float) -> void:
-	Survival.tick(sim, p, dt)
+	# needs (hunger, warmth, health...) are updated in Sim.step, partly on worker threads
 	if not p.alive:
 		return
 	if p.aboard >= 0:
@@ -63,7 +63,7 @@ static func _check_interrupts(sim: Sim, p: Human) -> void:
 	if cur == PRIO_ORDER and p.health > 25.0:
 		return                    # following orders: stay on task unless badly hurt
 	if not sim.enemies_of(p.civ_id, true).is_empty() and p.can_work():
-		var foe := _nearby_enemy(sim, p, 9.0)
+		var foe := p.sense_enemy if p.sense_step == sim.step_id else _nearby_enemy(sim, p, 9.0)
 		if foe != null:
 			if p.job == "soldier" and p.health > 30.0 and cur < PRIO_DEFEND and str(p.task.get("type", "")) != "attack":
 				if order_attack(sim, p, "human", foe.id, PRIO_DEFEND):
@@ -72,7 +72,7 @@ static func _check_interrupts(sim: Sim, p: Human) -> void:
 				if _set_task(sim, p, "flee", sim.col_of(p).drop_point(p.pos), PRIO_FLEE, {"label": "Fleeing from the %s!" % sim.col_of(foe).name}):
 					return
 	if cur < PRIO_FLEE:
-		var threat := _nearby_threat(sim, p, 5.0)
+		var threat := p.sense_threat if p.sense_step == sim.step_id else _nearby_threat(sim, p, 5.0)
 		if threat != null and (p.job != "hunter" or p.health < 45.0 or threat.def()["danger"] > 20.0):
 			var home := sim.col_of(p).drop_point(p.pos)
 			if _set_task(sim, p, "flee", home, PRIO_FLEE, {"label": "Fleeing from a %s!" % threat.def()["name"].to_lower()}):
@@ -680,9 +680,17 @@ static func _task_follow_parent(sim: Sim, p: Human) -> void:
 	_task_wander(sim, p, 2)
 
 
+## Looks around for enemies and dangerous animals ahead of the person's next think. Only reads
+## the world, so many people can do it at once on worker threads (Sim._sense).
+static func sense(sim: Sim, p: Human) -> void:
+	p.sense_enemy = _nearby_enemy(sim, p, 9.0) if sim.has_war_with(p.civ_id) else null
+	p.sense_threat = _nearby_threat(sim, p, 5.0)
+	p.sense_step = sim.step_id
+
+
 static func _nearby_threat(sim: Sim, p: Human, radius_tiles: float) -> Animal:
 	var r2 := pow(radius_tiles * Defs.TILE, 2)
-	for a in sim.animals:
+	for a in sim.animals_near(p.pos, radius_tiles * Defs.TILE):
 		if not a.alive:
 			continue
 		var d: Dictionary = a.def()
@@ -2363,10 +2371,12 @@ static func _nearest_of(sim: Sim, p: Human, c: Colony, r_tiles: float) -> Human:
 static func _nearby_enemy(sim: Sim, p: Human, r_tiles: float) -> Human:
 	var best: Human = null
 	var best_d := pow(r_tiles * Defs.TILE, 2)
-	for ec in sim.enemies_of(p.civ_id, true):
-		var q := _nearest_of(sim, p, ec, r_tiles)
-		if q != null and q.pos.distance_squared_to(p.pos) < best_d:
-			best_d = q.pos.distance_squared_to(p.pos)
+	for q in sim.people_near(p.pos, r_tiles * Defs.TILE):
+		if q.civ_id == p.civ_id or not q.alive:
+			continue
+		var d: float = q.pos.distance_squared_to(p.pos)
+		if d < best_d and sim.at_war(p.civ_id, q.civ_id):
+			best_d = d
 			best = q
 	return best
 

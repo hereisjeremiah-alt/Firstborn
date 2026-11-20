@@ -13,7 +13,7 @@ static func update(sim: Sim, a: Animal, dt: float) -> void:
 	var tile := sim.world.tile_of(a.pos)
 	if not sim.active_rect.has_point(tile):
 		a.lod_acc += dt
-		if a.lod_acc < 0.6:
+		if a.lod_acc < sim.lod_interval * 2.0:
 			return
 		dt = a.lod_acc
 		a.lod_acc = 0.0
@@ -44,7 +44,7 @@ static func _think(sim: Sim, a: Animal, d: Dictionary) -> void:
 	var predator := bool(d["predator"])
 	var flying := bool(d.get("flying", false))
 	if not predator:
-		var threat := _fear(sim, a, flying)
+		var threat := a.sense_fear if a.sense_step == sim.step_id else _fear(sim, a, flying)
 		if threat.x < 1e8:
 			var away := (a.pos - threat).normalized()
 			if away == Vector2.ZERO:
@@ -106,12 +106,16 @@ static func _pick_wander(sim: Sim, a: Animal, d: Dictionary) -> void:
 	a.wait = sim.rng.randf_range(1.0, 3.0)
 
 
+static func fear_of(sim: Sim, a: Animal) -> Vector2:
+	return _fear(sim, a, bool(a.def().get("flying", false)))
+
+
 ## Position of the scariest nearby thing, or (1e9, 1e9) if nothing.
 static func _fear(sim: Sim, a: Animal, flying: bool) -> Vector2:
 	var human_r := (3.0 if flying else (7.0 if a.hunted_by != -1 else 4.0)) * Defs.TILE
 	var best := Vector2(1e9, 1e9)
 	var best_d := 1e18
-	for p in sim.people_all:
+	for p in sim.people_near(a.pos, human_r):
 		if not p.alive:
 			continue
 		var dd: float = p.pos.distance_squared_to(a.pos)
@@ -126,7 +130,7 @@ static func _fear(sim: Sim, a: Animal, flying: bool) -> Vector2:
 			return t.pos
 		a.threat_id = -1
 	var pr := 5.0 * Defs.TILE
-	for o in sim.predators:
+	for o in sim.animals_near(a.pos, pr):
 		if not o.alive or o == a:
 			continue
 		var prey: Array = o.def().get("prey", [])
@@ -155,7 +159,7 @@ static func _predator_think(sim: Sim, a: Animal, d: Dictionary) -> void:
 	var night := sim.time.is_night()
 	# bears defend their space
 	if a.species == "bear":
-		for p in sim.people_all:
+		for p in sim.people_near(a.pos, 2.0 * Defs.TILE):
 			if not p.alive:
 				continue
 			if p.pos.distance_to(a.pos) < 1.6 * Defs.TILE and sim.rng.randf() < 0.12 and not _near_fire(sim, p.pos):
@@ -165,7 +169,7 @@ static func _predator_think(sim: Sim, a: Animal, d: Dictionary) -> void:
 		var prey: Array = d.get("prey", [])
 		var best: Animal = null
 		var best_d := pow(10.0 * Defs.TILE, 2)
-		for o in sim.animals:
+		for o in sim.animals_near(a.pos, 10.0 * Defs.TILE):
 			if not o.alive or not prey.has(o.species):
 				continue
 			var dd: float = o.pos.distance_squared_to(a.pos)
@@ -181,7 +185,7 @@ static func _predator_think(sim: Sim, a: Animal, d: Dictionary) -> void:
 			return
 	# hungry wolves and big cats may stalk people, mostly at night
 	if a.species != "bear" and (a.hunger < 12.0 or (night and a.hunger < 25.0)):
-		for p in sim.people_all:
+		for p in sim.people_near(a.pos, 5.0 * Defs.TILE):
 			if not p.alive:
 				continue
 			if p.pos.distance_to(a.pos) < 5.0 * Defs.TILE and not _near_fire(sim, p.pos):

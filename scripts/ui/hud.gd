@@ -2419,6 +2419,12 @@ func show_picker(on: bool) -> void:
 
 # ================================================================ per-frame refresh
 func _process(delta: float) -> void:
+	var _pt := Time.get_ticks_usec()
+	_process_inner(delta)
+	PerfLog.add("p_hud", (Time.get_ticks_usec() - _pt) / 1000.0)
+
+
+func _process_inner(delta: float) -> void:
 	if game == null or game.sim == null:
 		return
 	_age_announcements(delta)
@@ -2506,6 +2512,13 @@ func _refresh_top() -> void:
 		var b: Button = e[0]
 		var s: float = e[1]
 		b.set_pressed_no_signal((game.paused and s == 0.0) or (not game.paused and s == game.speed))
+		# when the computer can't keep up, the chosen speed shows what it really reaches
+		if s == game.speed and s >= 4.0 and not game.paused and game.real_speed < s * 0.9:
+			b.text = "%dx→%d" % [int(s), maxi(1, roundi(game.real_speed))]
+			b.tooltip_text = "Running at about %dx: the game keeps %d FPS and runs as fast as your computer allows." % [roundi(game.real_speed), Settings.target_fps]
+		elif s > 0.0:
+			b.text = "%dx" % int(s)
+			b.tooltip_text = ""
 
 
 # ================================================================ blacksmith actions

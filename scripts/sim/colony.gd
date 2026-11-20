@@ -539,11 +539,21 @@ func nearest_building(from: Vector2, type: String, built_only := true) -> Buildi
 	return best
 
 
+static var cur_step := 0           # the Sim's step number (per-step caches below)
+var _fires_step := -1
+var _fires: Array = []
+
+
+## Lit fires (cached for the current step; don't change the returned array).
 func lit_fires() -> Array:
+	if _fires_step == cur_step and cur_step > 0:
+		return _fires
 	var out: Array = []
 	for b in buildings:
 		if b.is_lit():
 			out.append(b)
+	_fires = out
+	_fires_step = cur_step
 	return out
 
 

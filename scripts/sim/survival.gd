@@ -7,9 +7,25 @@ const COMFORT_TEMP := 5.0   # hide-clad cavemen tolerate cool weather
 
 
 static func tick(sim: Sim, p: Human, dt: float) -> void:
-	if sim.civ(p.civ_id).bandit:
+	var ctx := colony_ctx(sim, sim.col_of(p))
+	if vitals(sim, p, dt, ctx):
+		after(sim, p, dt)
+
+
+## What every person of a tribe needs from it during vitals(), gathered on the main thread so
+## the worker threads only read plain values.
+static func colony_ctx(sim: Sim, c: Colony) -> Dictionary:
+	return {"bandit": c.bandit, "fires": c.lit_fires(), "warmth": c.bonus("warmth"), "medicine": c.bonus("medicine"),
+		"healer": c.has_built("healer_hut")}
+
+
+## Hunger, thirst, energy, warmth, health, illness and age for one person. Safe to run on a
+## worker thread: it only changes this person; anything that touches the rest of the world
+## (feeding babies, messages, deaths) is left for after(). Returns false for bandits.
+static func vitals(sim: Sim, p: Human, dt: float, ctx: Dictionary) -> bool:
+	if bool(ctx["bandit"]):
 		Bandits.keep_fed(p, dt)
-		return
+		return false
 	var hours := dt / Defs.HOUR
 	var days := hours / 24.0
 	var t := sim.world.tile_of(p.pos)
@@ -39,49 +55,17 @@ static func tick(sim: Sim, p: Human, dt: float) -> void:
 	else:
 		p.energy = maxf(0.0, p.energy - 4.0 * hours)
 
-	# infants are fed and watered by the tribe
-	if p.age_years() < 3.0:
-		if p.hunger < 60.0:
-			eat_from_stock(sim, p)
-			if p.hunger < 60.0:
-				var mom := sim.person(p.mother_id)
-				if mom == null or not mom.alive:
-					mom = null
-					for q in sim.col_of(p).living():
-						if q.is_adult():
-							mom = q
-							break
-				if mom != null:
-					p.hunger = minf(100.0, p.hunger + 20.0)
-					mom.hunger = maxf(0.0, mom.hunger - 10.0)
-		if p.thirst < 60.0:
-			if sim.col_of(p).count("water") >= 0.5:
-				sim.col_of(p).take("water", 0.5)
-				p.thirst = minf(100.0, p.thirst + 40.0)
-			else:
-				# nursed by the mother — or anyone in the tribe if she is gone
-				var nurse := sim.person(p.mother_id)
-				if nurse == null or not nurse.alive:
-					nurse = null
-					for q in sim.col_of(p).living():
-						if q.is_adult():
-							nurse = q
-							break
-				if nurse != null:
-					p.thirst = minf(100.0, p.thirst + 40.0)
-					nurse.thirst = maxf(0.0, nurse.thirst - 12.0)
-
 	# --- warmth
 	var eff := temp
 	var near_fire := false
-	for f in sim.col_of(p).lit_fires():
+	for f in ctx["fires"]:
 		if f.center().distance_squared_to(p.pos) < pow(4.5 * Defs.TILE, 2):
 			near_fire = true
 			break
 	if near_fire:
 		eff += 16.0
 	if p.clothed:
-		eff += 8.0 + sim.col_of(p).bonus("warmth")
+		eff += 8.0 + float(ctx["warmth"])
 	if p.age_years() < 3.0:
 		var mother := sim.person(p.mother_id)
 		if mother != null and mother.alive and mother.pos.distance_to(p.pos) < 2.5 * Defs.TILE:
@@ -120,18 +104,17 @@ static func tick(sim: Sim, p: Human, dt: float) -> void:
 	if temp > 38.0 and p.thirst < 30.0:
 		dmg += 0.8 * hours
 		why = "heat stroke"
+	p.recovered_from = ""
 	if p.is_sick():
 		var ill: Dictionary = Defs.ILLNESS[p.illness["type"]]
 		var resting: bool = p.sleeping or p.task.get("type", "") == "rest"
 		dmg += float(ill["drain"]) * days * (0.6 if resting else 1.0)
 		if why == "":
 			why = str(ill["name"]).to_lower()
-		var cure := (1.5 if resting else 1.0) * (1.0 + sim.col_of(p).bonus("medicine")) * (1.4 if sim.col_of(p).has_built("healer_hut") else 1.0)
+		var cure := (1.5 if resting else 1.0) * (1.0 + float(ctx["medicine"])) * (1.4 if bool(ctx["healer"]) else 1.0)
 		p.illness["days"] = float(p.illness["days"]) - days * cure
 		if float(p.illness["days"]) <= 0.0:
-			sim.notify(p.civ_id, "%s recovered from %s." % [p.name, ill["name"]], "good")
-			if ill.get("lifelong", false) and not p.illness["type"] in p.immunities:
-				p.immunities.append(p.illness["type"])
+			p.recovered_from = str(p.illness["type"])
 			p.illness = {}
 			p.immune_days = 6.0
 	if dmg > 0.0:
@@ -144,9 +127,54 @@ static func tick(sim: Sim, p: Human, dt: float) -> void:
 	# children grow up three times faster than adults age, so the tribe gets new workers sooner
 	# aging follows the calendar, which runs TimeSystem.CAL_SCALE times faster than daily life
 	p.age_days += days * sim.time.scale * (Config.rule("child_growth") if p.age_years() < 16.0 else Config.rule("aging_speed"))
+	p.death_why = why
+	return true
 
+
+## The part of a person's needs that touches others: babies are fed from the stores or by their
+## mother, recoveries are announced, and deaths happen. Main thread only.
+static func after(sim: Sim, p: Human, _dt: float) -> void:
+	if not p.alive:
+		return
+	# infants are fed and watered by the tribe
+	if p.age_years() < 3.0:
+		if p.hunger < 60.0:
+			eat_from_stock(sim, p)
+			if p.hunger < 60.0:
+				var mom := sim.person(p.mother_id)
+				if mom == null or not mom.alive:
+					mom = null
+					for q in sim.col_of(p).people:
+						if q.alive and q.is_adult():
+							mom = q
+							break
+				if mom != null:
+					p.hunger = minf(100.0, p.hunger + 20.0)
+					mom.hunger = maxf(0.0, mom.hunger - 10.0)
+		if p.thirst < 60.0:
+			if sim.col_of(p).count("water") >= 0.5:
+				sim.col_of(p).take("water", 0.5)
+				p.thirst = minf(100.0, p.thirst + 40.0)
+			else:
+				# nursed by the mother — or anyone in the tribe if she is gone
+				var nurse := sim.person(p.mother_id)
+				if nurse == null or not nurse.alive:
+					nurse = null
+					for q in sim.col_of(p).people:
+						if q.alive and q.is_adult():
+							nurse = q
+							break
+				if nurse != null:
+					p.thirst = minf(100.0, p.thirst + 40.0)
+					nurse.thirst = maxf(0.0, nurse.thirst - 12.0)
+	if p.recovered_from != "":
+		var ill: Dictionary = Defs.ILLNESS[p.recovered_from]
+		sim.notify(p.civ_id, "%s recovered from %s." % [p.name, ill["name"]], "good")
+		if ill.get("lifelong", false) and not p.recovered_from in p.immunities:
+			p.immunities.append(p.recovered_from)
+		p.recovered_from = ""
 	if p.health <= 0.0:
-		sim.kill(p, why if why != "" else "poor health")
+		sim.kill(p, p.death_why if p.death_why != "" else "poor health")
 
 
 # ---------------------------------------------------------------- eating & drinking

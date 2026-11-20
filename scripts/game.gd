@@ -18,6 +18,9 @@ var light_root: Node2D
 var lights := {}            # building id -> PointLight2D
 
 var speed := 1.0
+var real_speed := 1.0         # the speed the computer actually reaches (frame budget)
+var _sim_us := 0.0            # time the simulation took last frame
+var _other_us := 4000.0       # time everything else (drawing, UI) took last frame, smoothed
 var paused := false
 var menu_paused := false
 var spectating := false      # the player's tribe is gone: watch only
@@ -129,6 +132,8 @@ func _ready() -> void:
 		_earth_shots()
 	elif _args.has("--forgeshot"):
 		_forge_shot()
+	elif _args.has("--perf"):
+		_perf()
 	elif _args.has("--cmdtest"):
 		_cmdtest()
 
@@ -224,8 +229,16 @@ func map_clicked(world_pos: Vector2) -> void:
 
 # ================================================================ frame loop
 func _process(delta: float) -> void:
+	var _pt := Time.get_ticks_usec()
+	_process_inner(delta)
+	PerfLog.add("p_game", (Time.get_ticks_usec() - _pt) / 1000.0)
+
+
+func _process_inner(delta: float) -> void:
 	if not _ready_done:
 		return
+	_other_us = lerpf(_other_us, maxf(0.0, delta * 1e6 - _sim_us), 0.1)
+	_sim_us = 0.0
 	var vs := get_viewport_rect().size / camera.zoom
 	view_rect = Rect2(camera.get_screen_center_position() - vs * 0.5, vs)
 	var T := float(Defs.TILE)
@@ -249,10 +262,37 @@ func _process(delta: float) -> void:
 		var total := minf(delta, 0.1) * speed * turbo
 		if total > 0.0:
 			sim.play_secs += minf(delta, 0.1) * turbo        # real play time (diplomacy waits)
-			var steps := ceili(total / MAX_STEP)
+			# bigger steps at high speed (fewer, cheaper updates for the same game time)
+			var max_step := MAX_STEP if speed * turbo <= 2.0 else (0.2 if speed * turbo <= 8.0 else 0.3)
+			var steps := ceili(total / max_step)
 			var dt := total / steps
+			var _ts := Time.get_ticks_usec()
+			# frame budget: never spend more than this on the simulation in one frame, so the
+			# picture keeps moving at 60+ FPS; if the computer can't keep up, the game runs a
+			# little slower than the chosen speed instead of stuttering
+			sim.lod_interval = 0.3 if speed * turbo < 8.0 else 1.0
+			# adaptive budget: whatever is left of a 1/target-FPS frame after drawing and the UI
+			var frame_us := 1e6 / float(maxi(30, Settings.target_fps))
+			var budget_us := clampf(frame_us - _other_us - 1500.0, 3000.0, frame_us * 0.85) if turbo <= 1.0 else 1e12
+			var done := 0
 			for i in steps:
 				sim.step(dt)
+				done += 1
+				if Time.get_ticks_usec() - _ts > budget_us:
+					break
+			_sim_us = Time.get_ticks_usec() - _ts
+			var want_rate := speed
+			var got := float(done) / float(steps)
+			real_speed = lerpf(real_speed, want_rate * got, 0.1) if got < 0.999 else want_rate
+			if not perf.is_empty():
+				perf["sim_ms"] = float(perf["sim_ms"]) + (Time.get_ticks_usec() - _ts) / 1000.0
+				perf["steps"] = int(perf["steps"]) + done
+				perf["want_steps"] = int(perf.get("want_steps", 0)) + steps
+	if not perf.is_empty():
+		perf["frames"] = int(perf["frames"]) + 1
+		perf["frame_ms"] = float(perf["frame_ms"]) + delta * 1000.0
+		perf["worst"] = maxf(float(perf["worst"]), delta * 1000.0)
+		perf["proc_ms"] = float(perf.get("proc_ms", 0.0)) + Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 
 	if sim.time.season() != _season_shown:
 		_on_season_visual()
@@ -1028,7 +1068,7 @@ func _h_test(i: int) -> void:
 		var pops := sim.colonies.filter(func(o): return not o.collapsed and not o.bandit).map(func(o): return o.population())
 		var sm2 := sim.person(int(_ht.get("smith", -1)))
 		print("HT t%d: stock of %s = %d, orders %d, smith=%s | women %d, births %d, owed %d (due %d) pregnant-samples %d | pops %s" % [i, id2, int(c.count(id2)), c.weapon_orders.size(),
-			sm2.state if sm2 != null else "-", women, births, owed, due, int(_ht.get("preg", 0)), pops])
+			(sm2.state + "/" + sm2.job + " bench=" + str(c.buildings.filter(func(bb): return bb.type == "smithing_bench").map(func(bb): return [bb.built, bb.craft, snappedf(bb.craft_progress, 0.01)])) + " smiths=" + str(c.living().filter(func(q): return q.job == "smith").map(func(q): return q.state))) if sm2 != null else "-", women, births, owed, due, int(_ht.get("preg", 0)), pops])
 		_ht["preg"] = 0
 		if i == 9 and c.count(id2) >= 1.0:
 			# arm a fighter and check damage against a person and an animal
@@ -1845,6 +1885,69 @@ func _autotest() -> void:
 
 
 ## Renders screenshots for visual checks: `godot res://scenes/game.tscn -- --shots`
+## Performance check: a busy world at high speed, with timings every 5 seconds.
+## `-- --perf [--perfpop=N] [--perfspeed=S] [--perfsecs=T] [--earth --worldsize=640]`
+var perf := {}
+func _perf() -> void:
+	use_suggested_start()
+	await get_tree().create_timer(0.5).timeout
+	var pop := 30
+	var spd := 32.0
+	var secs := 40
+	for a in _args:
+		if a.begins_with("--perfpop="):
+			pop = int(a.substr(10))
+		if a.begins_with("--perfspeed="):
+			spd = float(a.substr(12))
+		if a.begins_with("--perfsecs="):
+			secs = int(a.substr(11))
+		if a.begins_with("--threads="):
+			Settings.threads = int(a.substr(10))
+		if a == "--nores":
+			resources.visible = false
+			resources.process_mode = Node.PROCESS_MODE_DISABLED
+		if a == "--noterrain":
+			terrain.visible = false
+	for c in sim.colonies:
+		if c.collapsed or c.bandit:
+			continue
+		for k in pop:
+			var q := sim._make_human(c, "M" if k % 2 == 0 else "F", (18.0 + (k % 25)) * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2((k % 8) * 5, (k / 8) * 5))
+			q.hunger = 90.0
+		for f in ["wood", "stone", "berries", "meat", "sticks"]:
+			c.add(f, 400)
+	camera.position = sim.world.center_of(sim.colony.home)
+	camera.zoom = Vector2(1, 1)
+	camera.target_zoom = 1.0
+	set_speed(spd)
+	perf = {"frames": 0, "frame_ms": 0.0, "sim_ms": 0.0, "draw_ms": 0.0, "steps": 0, "worst": 0.0}
+	sim.prof.clear()
+	PerfLog.on = true
+	PerfLog.take()
+	for k in secs / 5:
+		await get_tree().create_timer(5.0).timeout
+		var n := maxi(1, int(perf["frames"]))
+		var people := 0
+		for c in sim.colonies:
+			people += c.population()
+		var line := "PERF t%ds fps=%d frame=%.1fms worst=%.1fms sim=%.1fms/frame (%d steps) draw=%.2fms people=%d animals=%d |" % [(k + 1) * 5,
+			Engine.get_frames_per_second(), float(perf["frame_ms"]) / n, float(perf["worst"]), float(perf["sim_ms"]) / n, int(perf["steps"]) / n,
+			float(perf["draw_ms"]) / n, people, sim.animals.size()]
+		for key in sim.prof.keys():
+			line += " %s=%.2f" % [key, float(sim.prof[key]) / n]
+		var pl := PerfLog.take()
+		for key in pl.keys():
+			line += " %s=%.2f" % [key, float(pl[key]) / n]
+		line += " | paths=%d (%.2fms/frame) | main-thread process=%.1fms/frame, wanted steps %d" % [sim.paths.prof_n, sim.paths.prof_ms / n, float(perf.get("proc_ms", 0.0)) / n, int(perf.get("want_steps", 0)) / n]
+		sim.paths.prof_ms = 0.0
+		sim.paths.prof_n = 0
+		line += " | day %d roads %d builds %d" % [sim.time.day(), sim.road_tiles.size(), sim.colonies.reduce(func(a, o): return a + o.buildings.size(), 0)]
+		print(line)
+		perf = {"frames": 0, "frame_ms": 0.0, "sim_ms": 0.0, "draw_ms": 0.0, "steps": 0, "worst": 0.0}
+		sim.prof.clear()
+	get_tree().quit()
+
+
 func _forge_shot() -> void:
 	use_suggested_start()
 	await get_tree().create_timer(1.0).timeout

@@ -418,6 +418,12 @@ Tuning lives almost entirely in `scripts/world/defs.gd`. That includes day lengt
 - When fully zoomed out, people and animals aren't drawn at all — only their icons and the tribe flags.
 - Regrowth only scans tiles that can regrow, fish stocks recover lazily, and wildlife density uses spatial buckets, so big maps stay fast.
 - The simulation runs in fixed sub-steps, so 8x speed behaves the same as 1x.
+- **Multi-core**: needs, sight/danger checks (who sees which enemy, bandit or animal) and the territory map are worked out on up to 4 CPU cores (Settings › Game › CPU cores).
+- **Spatial grid**: people and animals are sorted into 128-px cells every step, so "who is near me" checks no longer scan the whole world.
+- **Frame budget**: the simulation only gets the part of each frame left after drawing, so the frame rate stays at your target (60 FPS by default). If the computer can't keep up at a high speed, the game runs a bit slower instead, and the speed button shows the real speed (e.g. `32x→21`).
+- Hourly and daily tribe work (job planning, building plans, roads) is spread over several steps instead of all landing on one frame.
+- Settings › Game › Performance: VSync, frame rate cap, the frame rate to keep at high speed, CPU cores.
+- `--perf [--perfpop=30] [--perfspeed=32] [--perfsecs=40]` prints a timing breakdown every 5 seconds.
 
 ## Not in the game yet
 

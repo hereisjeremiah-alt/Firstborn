@@ -113,6 +113,12 @@ func skip_track() -> void:
 
 
 func _process(delta: float) -> void:
+	var _pt := Time.get_ticks_usec()
+	_process_inner(delta)
+	PerfLog.add("p_sound", (Time.get_ticks_usec() - _pt) / 1000.0)
+
+
+func _process_inner(delta: float) -> void:
 	if _players.is_empty():
 		return
 	var cur: AudioStreamPlayer = _players[_active]

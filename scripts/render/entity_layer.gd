@@ -35,12 +35,25 @@ func crisp_text(at: Vector2, text: String, px: float, col: Color, outline := 3, 
 
 
 func _process(_delta: float) -> void:
+	var _pt := Time.get_ticks_usec()
+	_process_inner(_delta)
+	PerfLog.add("p_entity", (Time.get_ticks_usec() - _pt) / 1000.0)
+
+
+func _process_inner(_delta: float) -> void:
 	queue_redraw()
 
 
 func _draw() -> void:
 	if game == null or game.sim == null:
 		return
+	var _t0 := Time.get_ticks_usec()
+	_draw_all()
+	if not game.perf.is_empty():
+		game.perf["draw_ms"] = float(game.perf["draw_ms"]) + (Time.get_ticks_usec() - _t0) / 1000.0
+
+
+func _draw_all() -> void:
 	var sim: Sim = game.sim
 	var view: Rect2 = game.view_rect.grow(48.0)
 	var zoom: float = game.camera.zoom.x

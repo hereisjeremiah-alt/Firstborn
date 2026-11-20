@@ -13,6 +13,11 @@ var freeze_zoom_pct := 85.0      # ... beyond this zoom (100% = normal pixel siz
 var derender_speed := 16.0       # at this game speed or faster, people and animals aren't drawn
 var ui_sounds := true
 var show_fps := false
+var vsync := false               # cap the frame rate at the monitor's refresh rate
+var max_fps := 0                 # 0 = unlimited
+var sim_budget_ms := 10.0        # (old fixed budget; target_fps decides it now)
+var target_fps := 60             # frame rate the game protects at high speed
+var threads := 4                 # worker threads (cores) for the simulation
 
 
 func _ready() -> void:
@@ -31,6 +36,11 @@ func load_settings() -> void:
 	day_night = bool(cf.get_value("game", "day_night", day_night))
 	derender_speed = float(cf.get_value("game", "derender_speed", derender_speed))
 	show_fps = bool(cf.get_value("game", "show_fps", show_fps))
+	vsync = bool(cf.get_value("perf", "vsync", vsync))
+	max_fps = int(cf.get_value("perf", "max_fps", max_fps))
+	sim_budget_ms = float(cf.get_value("perf", "sim_budget_ms", sim_budget_ms))
+	threads = int(cf.get_value("perf", "threads", threads))
+	target_fps = int(cf.get_value("perf", "target_fps", target_fps))
 	freeze_zoomed = bool(cf.get_value("access", "freeze_zoomed", freeze_zoomed))
 	freeze_zoom_pct = float(cf.get_value("access", "freeze_zoom_pct", freeze_zoom_pct))
 
@@ -44,6 +54,11 @@ func save_settings() -> void:
 	cf.set_value("game", "day_night", day_night)
 	cf.set_value("game", "derender_speed", derender_speed)
 	cf.set_value("game", "show_fps", show_fps)
+	cf.set_value("perf", "vsync", vsync)
+	cf.set_value("perf", "max_fps", max_fps)
+	cf.set_value("perf", "sim_budget_ms", sim_budget_ms)
+	cf.set_value("perf", "threads", threads)
+	cf.set_value("perf", "target_fps", target_fps)
 	cf.set_value("access", "freeze_zoomed", freeze_zoomed)
 	cf.set_value("access", "freeze_zoom_pct", freeze_zoom_pct)
 	cf.save(PATH)
@@ -51,6 +66,8 @@ func save_settings() -> void:
 
 ## Pushes volumes into the audio buses (Master, Music, SFX).
 func apply() -> void:
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if vsync else DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = max_fps
 	_bus("Master", master_volume)
 	_bus(Sound.MUSIC_BUS, music_volume)
 	_bus(Sound.SFX_BUS, sfx_volume)

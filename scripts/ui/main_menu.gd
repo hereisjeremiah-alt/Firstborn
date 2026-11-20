@@ -61,6 +61,13 @@ func _menu_shots() -> void:
 		await get_tree().create_timer(0.5).timeout
 		get_viewport().get_texture().get_image().save_png("/tmp/shots/menu_%s.png" % pg)
 		print("saved menu ", pg)
+	# every settings tab
+	var tc: TabContainer = pages["settings"].find_children("*", "TabContainer", true, false)[0]
+	for t in tc.get_tab_count():
+		tc.current_tab = t
+		for k in 4:
+			await get_tree().process_frame
+		get_viewport().get_texture().get_image().save_png("/tmp/shots/menu_settings_%d.png" % t)
 	get_tree().quit()
 
 

@@ -15,6 +15,12 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	var _pt := Time.get_ticks_usec()
+	_process_inner(delta)
+	PerfLog.add("p_weather", (Time.get_ticks_usec() - _pt) / 1000.0)
+
+
+func _process_inner(delta: float) -> void:
 	if game == null or game.sim == null:
 		return
 	var sim: Sim = game.sim

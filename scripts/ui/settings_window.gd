@@ -46,8 +46,8 @@ func _ready() -> void:
 	_rule_row(game, Config.RULES[_rule_index("calendar_speed")])
 	game.add_child(_label("How fast dates, months, years and the clock move (5x = default). Walking and working speed don't change.", 12, Color(0.72, 0.7, 0.64)))
 	_check(game, "Show the day/night cycle", Settings.day_night, _set_prop.bind("day_night"))
-	_check(game, "Show FPS counter", Settings.show_fps, _set_prop.bind("show_fps"))
 	game.add_child(_label("Off: the world stays in daylight all the time (the clock still runs).", 12, Color(0.72, 0.7, 0.64)))
+	_check(game, "Show FPS counter", Settings.show_fps, _set_prop.bind("show_fps"))
 	var sr := HBoxContainer.new()
 	game.add_child(sr)
 	var sl := _label("Hide people and animals at game speed of", 14)
@@ -62,6 +62,12 @@ func _ready() -> void:
 	opt.item_selected.connect(_on_speed_opt.bind(opt))
 	sr.add_child(opt)
 	game.add_child(_label("At high speeds the game skips drawing every person and animal, which keeps the frame rate smooth.", 12, Color(0.72, 0.7, 0.64)))
+	game.add_child(_label("Performance", 16, Color(1.0, 0.85, 0.5)))
+	_check(game, "VSync (match the monitor's refresh rate)", Settings.vsync, _set_perf.bind("vsync"))
+	_choice(game, "Frame rate cap", [[0, "Unlimited"], [60, "60"], [120, "120"], [144, "144"], [240, "240"]], Settings.max_fps, _set_perf.bind("max_fps"))
+	_choice(game, "Keep this frame rate at high speed", [[60, "60 FPS"], [90, "90 FPS"], [120, "120 FPS"], [144, "144 FPS"]], Settings.target_fps, _set_perf.bind("target_fps"))
+	_choice(game, "CPU cores for the simulation", [[1, "1"], [2, "2"], [4, "4"], [8, "8"]], Settings.threads, _set_perf.bind("threads"))
+	game.add_child(_label("The game never lets the simulation drag the frame rate below your target: if your computer can't keep up at 32x, it runs a little slower instead (shown on the speed button). Needs, sight and danger checks are worked out on several cores.", 12, Color(0.72, 0.7, 0.64)))
 
 	# --- game rules
 	var rules := _tab(tabs, "Game Rules")
@@ -255,6 +261,29 @@ func _on_slider(x: float, vl: Label, cb: Callable) -> void:
 
 
 func _changed() -> void:
+	Settings.apply()
+	Settings.save_settings()
+
+
+func _choice(parent: Control, text: String, items: Array, current, cb: Callable) -> void:
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+	var l := _label(text, 14)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(l)
+	var opt := OptionButton.new()
+	opt.focus_mode = Control.FOCUS_NONE
+	for it in items:
+		opt.add_item(str(it[1]))
+		opt.set_item_metadata(opt.item_count - 1, it[0])
+		if it[0] == current:
+			opt.select(opt.item_count - 1)
+	opt.item_selected.connect(func(i): cb.call(opt.get_item_metadata(i)))
+	row.add_child(opt)
+
+
+func _set_perf(v, key: String) -> void:
+	Settings.set(key, v)
 	Settings.apply()
 	Settings.save_settings()
 

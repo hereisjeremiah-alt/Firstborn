@@ -44,6 +44,14 @@ var _weather_msg_day := -1
 var _last_season := 0
 var debug_log := false
 var prof := {}
+# ---------------------------------------------------------------- spatial index
+## People and animals sorted into 8x8-tile chunks, rebuilt every step, so "who is near me?"
+## only looks at a few chunks instead of everyone in the world.
+const CHUNK_PX := 128.0
+var _grid_people := {}
+var _grid_animals := {}
+var step_id := 0
+var lod_interval := 0.3            # how often off-screen people update (longer at high game speed)
 var tower_shots: Array = []     # [from, to, time left] for drawing arrows
 var states: StateMap            # territory states
 var claims_in_progress := {}    # civ id -> state id being claimed
@@ -455,8 +463,170 @@ func is_cold_season_tile(i: int) -> bool:
 
 
 # ================================================================ main step
+# ---------------------------------------------------------------- needs, on several cores
+const NEEDS_STEP := 0.5               # people's needs are brought up to date twice a game-second
+var _needs_list: Array = []
+var _needs_dt := PackedFloat32Array()
+var _needs_ctx: Array = []
+
+
+## Hunger, thirst, warmth, health and age for everyone whose turn it is. The number crunching
+## runs on worker threads (Settings.threads cores); feeding babies, messages and deaths follow
+## on the main thread, in order.
+func _update_needs(dt: float) -> void:
+	_needs_list.clear()
+	_needs_ctx.clear()
+	var ctx_of := {}
+	for c in colonies:
+		if c.collapsed and c.people.is_empty():
+			continue
+		var cx := Survival.colony_ctx(self, c)
+		for p in c.people:
+			if not p.alive:
+				continue
+			if p.surv_acc < 0.0:
+				p.surv_acc = float(p.id % 5) * 0.1        # spread people over the half second
+			p.surv_acc += dt
+			if p.surv_acc >= NEEDS_STEP:
+				_needs_list.append(p)
+				_needs_ctx.append(cx)
+	var n := _needs_list.size()
+	if n == 0:
+		return
+	_needs_dt.resize(n)
+	for i in n:
+		_needs_dt[i] = _needs_list[i].surv_acc
+		_needs_list[i].surv_acc = 0.0
+	if Settings.threads > 1 and n >= 24:
+		var task := WorkerThreadPool.add_group_task(_needs_task, n, mini(Settings.threads, OS.get_processor_count()), true, "needs")
+		WorkerThreadPool.wait_for_group_task_completion(task)
+	else:
+		for i in n:
+			_needs_task(i)
+	for i in n:
+		if _needs_list[i].needs_ok:
+			Survival.after(self, _needs_list[i], _needs_dt[i])
+
+
+func _needs_task(i: int) -> void:
+	var p: Human = _needs_list[i]
+	p.needs_ok = Survival.vitals(self, p, _needs_dt[i], _needs_ctx[i])
+
+
+# ---------------------------------------------------------------- sensing, on several cores
+var _sense_people: Array = []
+var _sense_animals: Array = []
+var _war_with := {}                  # civ id -> true: tribes at war with anyone (this step)
+
+
+func has_war_with(civ_id: int) -> bool:
+	return _war_with.has(civ_id)
+
+
+## Everyone about to think this step looks around for enemies and danger first, in parallel.
+func _sense(dt: float) -> void:
+	_war_with.clear()
+	for c in colonies:
+		if not c.collapsed and not enemies_of(c.civ_id, true).is_empty():
+			_war_with[c.civ_id] = true
+	# only those who will actually think during this step
+	_sense_people.clear()
+	for p in people_all:
+		if not p.alive or p.sleeping or p.aboard >= 0:
+			continue
+		var full: bool = (p.civ_id == 0 and lod_interval < 0.5) or active_rect.has_point(world.tile_of(p.pos))
+		var eff: float = dt if full else (p.lod_acc + dt if p.lod_acc + dt >= lod_interval else 0.0)
+		if eff > 0.0 and p.think_t - eff <= 0.0:
+			_sense_people.append(p)
+	_sense_animals.clear()
+	for a in animals:
+		if not a.alive:
+			continue
+		var full2 := active_rect.has_point(world.tile_of(a.pos))
+		var eff2: float = dt if full2 else (a.lod_acc + dt if a.lod_acc + dt >= lod_interval * 2.0 else 0.0)
+		if eff2 > 0.0 and a.think_t - eff2 <= 0.0 and not bool(a.def()["predator"]):
+			_sense_animals.append(a)
+	var np := _sense_people.size()
+	var na := _sense_animals.size()
+	if Settings.threads > 1 and np + na >= 48:
+		var threads := mini(Settings.threads, OS.get_processor_count())
+		var t1 := WorkerThreadPool.add_group_task(_sense_person, np, threads, true, "sense people")
+		WorkerThreadPool.wait_for_group_task_completion(t1)
+		var t2 := WorkerThreadPool.add_group_task(_sense_animal, na, threads, true, "sense animals")
+		WorkerThreadPool.wait_for_group_task_completion(t2)
+	else:
+		for i in np:
+			_sense_person(i)
+		for i in na:
+			_sense_animal(i)
+
+
+func _sense_person(i: int) -> void:
+	HumanAI.sense(self, _sense_people[i])
+
+
+func _sense_animal(i: int) -> void:
+	var a: Animal = _sense_animals[i]
+	a.sense_fear = AnimalAI.fear_of(self, a)
+	a.sense_step = step_id
+
+
+func _chunk_key(pos: Vector2) -> int:
+	return (int(pos.x / CHUNK_PX) << 16) | (int(pos.y / CHUNK_PX) & 0xFFFF)
+
+
+func rebuild_grid() -> void:
+	_grid_people.clear()
+	_grid_animals.clear()
+	for p in people_all:
+		if p.alive and p.aboard < 0:
+			var k := _chunk_key(p.pos)
+			if _grid_people.has(k):
+				_grid_people[k].append(p)
+			else:
+				_grid_people[k] = [p]
+	for a in animals:
+		if a.alive:
+			var k := _chunk_key(a.pos)
+			if _grid_animals.has(k):
+				_grid_animals[k].append(a)
+			else:
+				_grid_animals[k] = [a]
+
+
+func _near(grid: Dictionary, pos: Vector2, r: float) -> Array:
+	var out: Array = []
+	var x0 := int((pos.x - r) / CHUNK_PX)
+	var x1 := int((pos.x + r) / CHUNK_PX)
+	var y0 := int((pos.y - r) / CHUNK_PX)
+	var y1 := int((pos.y + r) / CHUNK_PX)
+	for cx in range(x0, x1 + 1):
+		for cy in range(y0, y1 + 1):
+			var k := (cx << 16) | (cy & 0xFFFF)
+			if grid.has(k):
+				out.append_array(grid[k])
+	return out
+
+
+## Living people within about `r` pixels (from the last rebuild; check exact distance yourself).
+func people_near(pos: Vector2, r: float) -> Array:
+	return _near(_grid_people, pos, r)
+
+
+func animals_near(pos: Vector2, r: float) -> Array:
+	return _near(_grid_animals, pos, r)
+
+
 func step(dt: float) -> void:
+	step_id += 1
+	Colony.cur_step = step_id
+	rebuild_grid()
+	var _tsp := Time.get_ticks_usec()
+	_run_spread()
+	prof["spread"] = float(prof.get("spread", 0.0)) + (Time.get_ticks_usec() - _tsp) / 1000.0
+	var _tf := Time.get_ticks_usec()
 	fog.update(self, dt)
+	prof["fog"] = float(prof.get("fog", 0.0)) + (Time.get_ticks_usec() - _tf) / 1000.0
 	if not colony.just_researched.is_empty():
 		_announce_techs()
 	var want_scale := Config.rule("calendar_speed")
@@ -472,18 +642,24 @@ func step(dt: float) -> void:
 			emit_signal("event", "%s rolls in over the land." % ("A storm" if weather.state == WeatherSystem.W.STORM else "Snowfall"), "warn")
 	if not started:
 		return
+	var _tsn := Time.get_ticks_usec()
+	_sense(dt)
+	prof["sense"] = float(prof.get("sense", 0.0)) + (Time.get_ticks_usec() - _tsn) / 1000.0
+	var _ta := Time.get_ticks_usec()
+	_update_needs(dt)
+	prof["needs"] = float(prof.get("needs", 0.0)) + (Time.get_ticks_usec() - _ta) / 1000.0
 	var _t0 := Time.get_ticks_usec()
 	for c in colonies:
 		var player: bool = c.civ_id == 0
 		for p in c.people:
 			if not p.alive:
 				continue
-			if player or active_rect.has_point(world.tile_of(p.pos)):
+			if (player and lod_interval < 0.5) or active_rect.has_point(world.tile_of(p.pos)):
 				HumanAI.update(self, p, dt)
 			else:
-				# distant tribes are simulated in coarser steps
+				# people off-screen (distant tribes; at high speed also your own) think in coarser steps
 				p.lod_acc += dt
-				if p.lod_acc >= 0.3:
+				if p.lod_acc >= lod_interval:
 					HumanAI.update(self, p, p.lod_acc)
 					p.lod_acc = 0.0
 		for b in c.buildings:
@@ -512,7 +688,28 @@ func step(dt: float) -> void:
 		prof["hourly"] = float(prof.get("hourly", 0.0)) + (Time.get_ticks_usec() - _t4) / 1000.0
 	if time.day() != _last_day:
 		_last_day = time.day()
+		var _t5 := Time.get_ticks_usec()
 		_daily()
+		prof["daily"] = float(prof.get("daily", 0.0)) + (Time.get_ticks_usec() - _t5) / 1000.0
+
+
+## Work that is spread over the next few steps (one tribe at a time) instead of all landing in
+## one frame, which would make the game stutter at high speed.
+var _spread: Array = []
+
+
+func _run_spread() -> void:
+	if _spread.is_empty():
+		return
+	var n := 1 if _spread.size() <= colonies.size() * 2 else _spread.size()     # catch up if it piles up
+	for k in mini(n, _spread.size()):
+		var f: Callable = _spread.pop_front()
+		f.call()
+
+
+func flush_spread() -> void:
+	while not _spread.is_empty():
+		_run_spread()
 
 
 func _hourly() -> void:
@@ -521,15 +718,21 @@ func _hourly() -> void:
 		c.now_years = yrs
 		if c.collapsed or c.bandit:
 			continue
-		Survival.hourly(self, c)
-		_produce(c)
-		CivAI.update(self, c)
-		Elections.update(self, c)
+		_spread.append(_hourly_colony.bind(c))
 	Bandits.hourly(self)
 	_check_contacts()
 	Borders.check_trespass(self)
 	Deals.expire(self)
 	Milestones.check(self)
+
+
+func _hourly_colony(c: Colony) -> void:
+	if c.collapsed:
+		return
+	Survival.hourly(self, c)
+	_produce(c)
+	CivAI.update(self, c)
+	Elections.update(self, c)
 
 
 ## Hourly output of production buildings.
@@ -580,15 +783,21 @@ func _daily() -> void:
 	for c in colonies:
 		if c.collapsed or c.bandit:
 			continue
-		Survival.daily(self, c)
-		_farms(c, season)
-		# a trickle of Talents from crafts and beachcombing keeps money moving between tribes
-		c.money += Config.rule("shell_income") * c.population()
+		_spread.append(_daily_colony.bind(c, season))
 	_drift_relations()
 	Warfare.daily(self)
 	_regrow(season)
 	_regrow_trees(season)
 	AnimalAI.daily(self)
+
+
+func _daily_colony(c: Colony, season: int) -> void:
+	if c.collapsed:
+		return
+	Survival.daily(self, c)
+	_farms(c, season)
+	# a trickle of Talents from crafts and beachcombing keeps money moving between tribes
+	c.money += Config.rule("shell_income") * c.population()
 
 
 func _on_new_season(season: int) -> void:

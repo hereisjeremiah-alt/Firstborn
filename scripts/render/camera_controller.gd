@@ -17,6 +17,12 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	var _pt := Time.get_ticks_usec()
+	_process_inner(delta)
+	PerfLog.add("p_cam", (Time.get_ticks_usec() - _pt) / 1000.0)
+
+
+func _process_inner(delta: float) -> void:
 	var dir := Vector2.ZERO
 	var typing := get_viewport().gui_get_focus_owner() is LineEdit
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):

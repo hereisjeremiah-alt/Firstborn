@@ -157,7 +157,9 @@ static func desired_jobs(sim: Sim, c: Colony, n: int) -> Dictionary:
 		for q in c.soldiers():
 			if q.weapon == "":
 				unarmed += 1
-		want["smith"] = 1 if unarmed > 0 or n >= 10 or war or not c.weapon_orders.is_empty() else 0
+		# keep a smith while anything is half-forged too (the order has already left the queue)
+		var forging := c.buildings.any(func(bb): return (bb.type == "smithing_bench" or bb.type == "blacksmith") and bb.craft != "")
+		want["smith"] = 1 if unarmed > 0 or n >= 10 or war or forging or not c.weapon_orders.is_empty() else 0
 	return want
 
 

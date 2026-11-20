@@ -12,6 +12,8 @@ var _tex_version := -1
 var _road_tex: ImageTexture
 var _road_version := -1
 var _road_t := 0.0
+var _state_t := 0.0
+var _redraw_t := 0.0
 var zoomable := false            # the big World Map: mouse wheel zooms, right/middle-drag pans
 var map_zoom := 1.0
 var map_center := Vector2(0.5, 0.5)   # point of the map (0..1) at the middle of the view
@@ -67,18 +69,30 @@ static func make_texture(wm: WorldMap) -> ImageTexture:
 
 
 func _process(_delta: float) -> void:
+	var _pt := Time.get_ticks_usec()
+	_process_inner(_delta)
+	PerfLog.add("p_map", (Time.get_ticks_usec() - _pt) / 1000.0)
+
+
+func _process_inner(_delta: float) -> void:
 	if visible:
-		if game != null and game.sim != null and game.sim.states != null and _tex_version != game.sim.states.version:
-			_tex_version = game.sim.states.version
-			_terr_tex = make_state_texture(game.sim, true) if size.x >= 300.0 else null
-			_border_tex = make_state_texture(game.sim, false)
+		if game != null and game.sim != null and game.sim.states != null:
+			_poll_state_images(game.sim, _delta)
+			if _tex_version != _st_version and _st_border != null:
+				_tex_version = _st_version
+				_terr_tex = ImageTexture.create_from_image(_st_fill) if size.x >= 300.0 else null
+				_border_tex = ImageTexture.create_from_image(_st_border)
 		if game != null and game.sim != null and game.sim.world != null and _road_version != game.sim.road_version:
 			_road_t -= _delta
 			if _road_t <= 0.0 or _road_tex == null:
 				_road_t = 1.0
 				_road_version = game.sim.road_version
 				_road_tex = make_road_texture(game.sim)
-		queue_redraw()
+		# the small map redraws 15 times a second; the big one (dragged, zoomed) every frame
+		_redraw_t -= _delta
+		if zoomable or _redraw_t <= 0.0:
+			_redraw_t = 1.0 / 15.0
+			queue_redraw()
 
 
 ## Every road and bridge, in the colour of the tribe that built it, with a dark edge so it
@@ -108,6 +122,86 @@ static func make_road_texture(sim: Sim) -> ImageTexture:
 ## Political map: every state filled with its owner's colour (unclaimed land in grey) with thin
 ## borders between states. `fill` false gives just the coloured borders of claimed states, drawn
 ## over the normal terrain map.
+# ---------------------------------------------------------------- territory pictures, built on a worker thread
+static var _st_version := -1          # states.version the finished pictures show
+static var _st_fill: Image
+static var _st_border: Image
+static var _st_task := -1
+static var _st_task_version := -1
+static var _st_snap := {}
+static var _st_wait := 0.0
+
+
+## Keeps the shared territory pictures up to date: when borders change, a worker thread draws
+## the new ones (at most every 2 seconds) while the game carries on.
+static func _poll_state_images(sim: Sim, delta: float) -> void:
+	_st_wait -= delta
+	if _st_task >= 0:
+		if WorkerThreadPool.is_task_completed(_st_task):
+			WorkerThreadPool.wait_for_task_completion(_st_task)
+			_st_task = -1
+			_st_fill = _st_snap["fill_img"]
+			_st_border = _st_snap["border_img"]
+			_st_version = _st_task_version
+		return
+	if sim.states.version == _st_version or (_st_wait > 0.0 and _st_border != null):
+		return
+	_st_wait = 2.0
+	var colors: Array = []
+	for c in sim.colonies:
+		colors.append(c.color)
+	var tcol: Array = []
+	for t in Defs.TERRAIN:
+		var base: Color = t["color"]
+		var g := base.get_luminance() * 0.6 + 0.18
+		tcol.append(Color(g, g, g * 0.96))
+	_st_snap = {"w": sim.world.w, "h": sim.world.h, "ids": sim.states.ids.duplicate(), "owners": sim.states.owners.duplicate(),
+		"colors": colors, "terrain": sim.world.terrain.duplicate(), "tcol": tcol}
+	_st_task_version = sim.states.version
+	if sim.world.w * sim.world.h < 120000 or Settings.threads <= 1:
+		_build_state_images(_st_snap)          # small maps: quick enough right here
+		_st_fill = _st_snap["fill_img"]
+		_st_border = _st_snap["border_img"]
+		_st_version = _st_task_version
+	else:
+		_st_task = WorkerThreadPool.add_task(_build_state_images.bind(_st_snap), false, "territory map")
+
+
+static func _build_state_images(snap: Dictionary) -> void:
+	var w: int = snap["w"]
+	var h: int = snap["h"]
+	var ids = snap["ids"]
+	var owners = snap["owners"]
+	var colors: Array = snap["colors"]
+	var terrain: PackedByteArray = snap["terrain"]
+	var tcol: Array = snap["tcol"]
+	var fill := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var border := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	fill.fill(Color(0, 0, 0, 0))
+	border.fill(Color(0, 0, 0, 0))
+	var sea := Color(0.10, 0.16, 0.26)
+	for y in h:
+		for x in w:
+			var i := y * w + x
+			var st := int(ids[i])
+			if st < 0:
+				fill.set_pixel(x, y, sea)
+				continue
+			var edge: bool = (x < w - 1 and int(ids[i + 1]) != st) or (y < h - 1 and int(ids[i + w]) != st) \
+				or (x > 0 and int(ids[i - 1]) != st) or (y > 0 and int(ids[i - w]) != st)
+			var ow := int(owners[st])
+			if ow >= 0:
+				var cc: Color = colors[ow]
+				fill.set_pixel(x, y, cc.darkened(0.55 if edge else 0.12))
+				if edge:
+					border.set_pixel(x, y, cc)
+			else:
+				var g: Color = tcol[terrain[i]]
+				fill.set_pixel(x, y, g.darkened(0.35) if edge else g)
+	snap["fill_img"] = fill
+	snap["border_img"] = border
+
+
 static func make_state_texture(sim: Sim, fill: bool) -> ImageTexture:
 	var wm := sim.world
 	var sm: StateMap = sim.states

@@ -4,6 +4,8 @@ extends RefCounted
 
 var astar := AStarGrid2D.new()
 var world: WorldMap
+var prof_ms := 0.0
+var prof_n := 0
 
 
 func setup(wm: WorldMap) -> void:
@@ -51,7 +53,10 @@ func find_path(from: Vector2i, to: Vector2i) -> Array:
 		var rest := find_path(start, goal)
 		rest.push_front(start)
 		return rest
+	var _t := Time.get_ticks_usec()
 	var pts := astar.get_id_path(start, goal, true)
+	prof_ms += (Time.get_ticks_usec() - _t) / 1000.0
+	prof_n += 1
 	if pts.is_empty():
 		return []
 	var out: Array = []
