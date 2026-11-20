@@ -1550,7 +1550,7 @@ Two per age, researched in the tree: Shaman's Circle and Great Hearth (Caveman),
 When someone is badly sick with something catching, your people may ask you to send them away. It stops the spread but saddens the tribe.
 
 [b]Trading distance[/b]
-Traders go up to 160 tiles (home to home); Trade Wagons add 120 more. Both can be changed in Game Rules.
+Traders go up to 250 tiles (home to home); Trade Wagons add 200 more. Both can be changed in Game Rules.
 
 [b]War structures[/b]
 Every age has a defensive post (Rock Lookout → Sling Platform → Bronze Bastion → Ballista Tower) that shoots enemies and predators, and offensive works (War Drum Circle, Ram Shed, Catapult, Trebuchet) that make your soldiers stronger or smash enemy buildings from afar. Research them in the Military row.

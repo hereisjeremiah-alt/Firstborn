@@ -460,4 +460,4 @@ Tuning lives almost entirely in `scripts/world/defs.gd`. That includes day lengt
 - **Civil war**: when half or more of a tribe's adults dislike their leader, the tribe may split (Game Rules: yearly chance). Rebels take the far half of the land and its buildings and go to war with the loyalists. The Colony panel shows the share against the leader.
 - **Sending the sick away**: your tribe asks whether a badly sick, contagious person should be sent away. AI tribes decide themselves.
 - **Bonus buildings** (2 per age, expensive, each kind counts at most twice): Shaman's Circle, Great Hearth, Flint Works, Stone Calendar, Marketplace, Bathhouse, Academy, Iron Foundry.
-- **Trading distance**: World settings *Trading distance* (default 160 tiles) and *Extra distance with Trade Wagons* (default +120).
+- **Trading distance**: World settings *Trading distance* (default 250 tiles) and *Extra distance with Trade Wagons* (default +200).
