@@ -55,6 +55,8 @@ var last_election := {}
 var now_years := 0.0         # current calendar year (kept up to date by Sim)
 var auto_convert := true     # researchers turn KP into RP automatically
 var auto_research := true    # ... and spend it on the cheapest available tech
+var victories := 0           # tribes conquered
+var war_parties_sent := 0
 var exile_asked := {}        # person id -> true: the tribe already raised sending them away
 var exile_sorrow := 0.0      # days the tribe is still sad about someone it sent away
 var dislike_share := 0.0     # share of adults who want the leader gone (civil war at 50%+)
@@ -591,7 +593,7 @@ func to_dict() -> Dictionary:
 		"race": race, "flag": FlagArt.to_save(flag), "gov": government, "gov_pending": gov_pending, "clear": clear_marks.keys(),
 		"wall_ring": wall_ring, "wall_tier": wall_tier, "weapon_orders": weapon_orders.duplicate(),
 		"era_start": era_start_year, "bonus_years": bonus_years, "auto_convert": auto_convert, "auto_research": auto_research,
-		"auto_expand": auto_expand, "auto_advance": auto_advance, "civil_after": civil_war_after, "cheat": cheat,
+		"auto_expand": auto_expand, "auto_advance": auto_advance, "civil_after": civil_war_after, "victories": victories, "cheat": cheat,
 		"leader": leader_id, "leader_title": leader_title, "leader_terms": leader_terms, "leader_fx": leader_fx.duplicate(),
 		"next_election": next_election, "last_election": last_election.duplicate(true),
 		"zones_i": zones.keys(), "zones_v": zones.values(), "roads": road_marks.keys(), "wreck": wreck_marks.keys(), "auto_roads": auto_roads, "backed": backed_id,
@@ -646,6 +648,7 @@ func from_dict(d: Dictionary) -> void:
 	auto_expand = bool(d.get("auto_expand", civ_id != 0))
 	auto_advance = bool(d.get("auto_advance", false))
 	civil_war_after = float(d.get("civil_after", 0.0))
+	victories = int(d.get("victories", 0))
 	cheat = bool(d.get("cheat", false))
 	leader_id = int(d.get("leader", -1))
 	leader_title = str(d.get("leader_title", ""))

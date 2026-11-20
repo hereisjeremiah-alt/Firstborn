@@ -94,6 +94,13 @@ func _ready() -> void:
 	rnd.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rnd.pressed.connect(_on_rules_random)
 	rbtns.add_child(rnd)
+	for pn in Config.PRESETS.keys():
+		var pb := Button.new()
+		pb.text = pn
+		pb.tooltip_text = Config.PRESET_DESC[pn]
+		pb.focus_mode = Control.FOCUS_NONE
+		pb.pressed.connect(_on_rules_preset.bind(pn))
+		rbtns.add_child(pb)
 
 	# --- accessibility
 	var acc := _tab(tabs, "Accessibility")
@@ -190,6 +197,14 @@ func _show_rule(key: String) -> void:
 	for vl in _rule_values[key]:
 		(vl as Label).text = text
 		(vl as Label).add_theme_color_override("font_color", Color(1.0, 0.75, 0.35) if changed else Color(0.6, 0.85, 1.0))
+
+
+func _on_rules_preset(pn: String) -> void:
+	Config.apply_preset(pn)
+	for k in _rule_sliders.keys():
+		for s2 in _rule_sliders[k]:
+			(s2 as HSlider).set_value_no_signal(Config.rule(k))
+		_show_rule(k)
 
 
 func _on_rules_random() -> void:

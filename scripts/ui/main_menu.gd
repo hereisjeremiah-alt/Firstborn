@@ -182,6 +182,16 @@ func _page_new() -> Control:
 		var b := _button(e[0], show_page.bind(e[1]))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		custom.add_child(b)
+	left.add_child(_label("Rule presets:", 13, Color(0.85, 0.8, 0.65)))
+	var pre := HBoxContainer.new()
+	pre.add_theme_constant_override("separation", 4)
+	left.add_child(pre)
+	for pn in Config.PRESETS.keys():
+		var pb := _button(pn, _on_preset.bind(pn))
+		pb.tooltip_text = Config.PRESET_DESC[pn]
+		pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pb.add_theme_font_size_override("font_size", 13)
+		pre.add_child(pb)
 	var rr2 := _button("Randomize all rule sliders", _on_rules_random_new)
 	rr2.tooltip_text = "Every Game Rules slider gets a random (but playable) value. Open Game Rules to see or tweak them."
 	left.add_child(rr2)
@@ -304,6 +314,11 @@ func _page_rules() -> Control:
 	v.add_child(bh)
 	bh.add_child(_button("Reset to defaults", _on_rules_reset))
 	bh.add_child(_button("Randomize", _on_rules_random))
+	bh.add_child(VSeparator.new())
+	for pn in Config.PRESETS.keys():
+		var pb2 := _button(pn, _on_preset.bind(pn))
+		pb2.tooltip_text = Config.PRESET_DESC[pn]
+		bh.add_child(pb2)
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bh.add_child(sp)
@@ -332,6 +347,14 @@ func _show_rule(key: String) -> void:
 				rules_values[key].text = ("%d" % int(v)) if absf(v - roundf(v)) < 0.01 else ("%.2f" % v)
 		var changed := absf(v - float(r[5])) > 0.001
 		rules_values[key].add_theme_color_override("font_color", Color(1.0, 0.75, 0.35) if changed else Color(0.6, 0.85, 1.0))
+
+
+func _on_preset(pn: String) -> void:
+	Config.apply_preset(pn)
+	for k in rules_sliders.keys():
+		rules_sliders[k].set_value_no_signal(Config.rule(k))
+		_show_rule(k)
+	preview_label.text = "%s rules applied: %s Open Game Rules… to fine-tune them." % [pn, Config.PRESET_DESC[pn]]
 
 
 func _on_rules_random_new() -> void:

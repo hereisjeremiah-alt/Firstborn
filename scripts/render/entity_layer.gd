@@ -723,6 +723,19 @@ func _draw_human(p: Human, selected: bool, zoom: float, tribe: Color) -> void:
 		body_c = body_c.lightened(0.1)
 	draw_rect(Rect2(pos + Vector2(-3.5, -4 + bob) * s, Vector2(7, 7) * s), body_c)
 	draw_rect(Rect2(pos + Vector2(-3.5, 1 + bob) * s, Vector2(7, 2) * s), body_c.darkened(0.25))
+	# armor on soldiers and war-party fighters: hide, leather with a wicker shield, bronze scale, iron mail
+	var tier := Warfare.armor_tier(game.sim.col_of(p)) if Warfare.is_fighter(p) and a >= 12.0 else 0
+	if tier > 0:
+		var ac: Color = [Color(0.55, 0.40, 0.25), Color(0.48, 0.32, 0.18), Color(0.82, 0.58, 0.28), Color(0.62, 0.64, 0.68)][tier - 1]
+		draw_rect(Rect2(pos + Vector2(-3.7, -4.2 + bob) * s, Vector2(7.4, 5.6) * s), ac)
+		if tier >= 3:
+			for ry in 3:
+				draw_line(pos + Vector2(-3.5, -3 + ry * 1.7 + bob) * s, pos + Vector2(3.5, -3 + ry * 1.7 + bob) * s, ac.darkened(0.3), 0.6)
+		draw_rect(Rect2(pos + Vector2(-3.7, -4.2 + bob) * s, Vector2(7.4, 5.6) * s), ac.darkened(0.35), false, 0.7)
+		if tier >= 2:
+			var sh_c: Color = Color(0.62, 0.50, 0.30) if tier == 2 else ac.lightened(0.1)
+			draw_circle(pos + Vector2(-f * 5.0, -1 + bob) * s, 3.0 * s, sh_c.darkened(0.25))
+			draw_circle(pos + Vector2(-f * 5.0, -1 + bob) * s, 2.2 * s, sh_c)
 	# arms
 	draw_rect(Rect2(pos + Vector2(-5, -3 + bob) * s, Vector2(1.5, 5) * s), skin)
 	draw_rect(Rect2(pos + Vector2(3.5, -3 + bob) * s, Vector2(1.5, 5) * s), skin)

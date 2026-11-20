@@ -63,6 +63,11 @@ static func target(sim: Sim, c: Colony) -> Dictionary:
 		parts["Robbed by bandits"] = -6.0
 	if c.exile_sorrow > 0.0:
 		parts["Sent one of their own away"] = -5.0
+	var wm := Warfare.war_months(sim, c)
+	if wm >= 1.0:
+		parts["War weariness (%d months at war)" % int(wm)] = -minf(15.0, 2.0 + wm * 1.5)
+	if c.victories > 0:
+		parts["Proud of past victories"] = minf(8.0, 4.0 * c.victories)
 	return parts
 
 

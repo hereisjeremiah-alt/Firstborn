@@ -48,6 +48,9 @@ const RULES := [
 	["defect_below", "Unhappiness that splits a tribe", 0.0, 0.6, 0.05, 0.2, "%", "World", "When a tribe's political happiness falls below this, a group of its people may leave."],
 	["trade_range", "Trading distance (tiles)", 30.0, 800.0, 10.0, 250.0, "", "World", "How far traders will walk or sail to another tribe, home to home."],
 	["wagon_trade_bonus", "Extra distance with Trade Wagons", 0.0, 800.0, 10.0, 200.0, "", "World", "How much further traders reach once Trade Wagons (Stone Age) are researched."],
+	["kill_war_chance", "War chance when someone is killed", 0.0, 1.0, 0.05, 0.6, "%", "World", "Chance that a tribe declares war when one of its people is killed by another tribe."],
+	["leader_kill_war_chance", "War chance when a leader is killed", 0.0, 1.0, 0.05, 0.9, "%", "World", "Chance of war when another tribe kills a tribe's leader. Killing an enemy leader (or burning their Capitol) during a war conquers the whole tribe."],
+	["war_parties", "Monthly war parties", 0.0, 1.0, 1.0, 1.0, "b", "World", "Tribes at war send an attack party against each other once a month, in every age."],
 	["civil_war_chance", "Yearly chance of civil war", 0.0, 1.0, 0.05, 0.3, "%", "World", "When half or more of a tribe's adults dislike their leader, the chance each calendar year that the tribe splits in a civil war."],
 	["defect_chance", "Yearly chance of a split", 0.0, 1.0, 0.05, 0.4, "%", "World", "Chance each calendar year that an unhappy tribe splits: a group leaves to join another tribe (if allowed) or to found their own."],
 	["election_years", "Years between elections", 1.0, 30.0, 1.0, 4.0, "d", "World", "Calendar years a Chief or President serves before the next election."],
@@ -103,6 +106,43 @@ func randomize_rules() -> void:
 			v = def * rng.randf_range(0.5, 1.8)
 		v = clampf(snappedf(v, step), lo, hi)
 		rules[key] = v
+
+
+## Ready-made sets of rules for the new-world screen. Each starts from the defaults and scales
+## a few sliders (multipliers on the default value).
+const PRESETS := {
+	"Easy": {"hunger_rate": 0.75, "spoilage": 0.7, "illness_freq": 0.6, "illness_lethality": 0.6, "contagion": 0.7, "child_risk": 0.6,
+		"ai_aggression": 0.5, "bandit_camps": 0.34, "start_people": 2.0, "start_money": 2.0, "work_speed": 1.2, "tech_cost": 0.8,
+		"trespass_war": 0.5, "defect_chance": 0.5, "civil_war_chance": 0.5, "kill_war_chance": 0.6, "leader_kill_war_chance": 0.75},
+	"Medium": {},
+	"Hard": {"hunger_rate": 1.3, "spoilage": 1.3, "illness_freq": 1.4, "illness_lethality": 1.4, "contagion": 1.3, "child_risk": 1.3,
+		"ai_aggression": 1.8, "bandit_camps": 1.67, "start_money": 0.5, "work_speed": 0.85, "tech_cost": 1.25,
+		"trespass_war": 1.5, "defect_chance": 1.5, "civil_war_chance": 1.5},
+	"Fast-paced": {"calendar_speed": 2.0, "aging_speed": 1.5, "child_growth": 1.5, "work_speed": 1.4, "tech_cost": 0.7, "birth_chance": 1.3,
+		"pregnancy_days": 0.7, "election_years": 0.6, "tree_regrow_days": 0.5, "era_cost_mult": 0.75},
+	"Slow-paced": {"calendar_speed": 0.5, "aging_speed": 0.7, "child_growth": 0.7, "work_speed": 0.8, "tech_cost": 1.4,
+		"pregnancy_days": 1.2, "election_years": 1.5, "tree_regrow_days": 1.5, "era_cost_mult": 1.25},
+}
+const PRESET_DESC := {
+	"Easy": "Less hunger, sickness and danger; more Talents, people and faster work.",
+	"Medium": "The standard rules.",
+	"Hard": "Hungrier, sicker people, aggressive rivals, more bandits and slower progress.",
+	"Fast-paced": "Time, growth, building and research all move faster.",
+	"Slow-paced": "A long, slow game: everything takes more time.",
+}
+
+
+func apply_preset(name: String) -> void:
+	reset_rules()
+	var p: Dictionary = PRESETS.get(name, {})
+	for r in RULES:
+		var key: String = r[0]
+		if not p.has(key):
+			continue
+		var v: float = float(r[5]) * float(p[key])
+		if key == "start_people":
+			v = float(r[5]) + float(p[key])       # extra founders, not a multiple
+		rules[key] = clampf(snappedf(v, float(r[4])), float(r[2]), float(r[3]))
 
 
 func reset_races() -> void:

@@ -229,12 +229,29 @@ static func _set_task(sim: Sim, p: Human, type: String, dest: Vector2i, prio: in
 	return true
 
 
+## A tribe's leader stays inside its own borders (or close to home before it has any land).
+static func leader_may_go(sim: Sim, p: Human, dest: Vector2i) -> bool:
+	var c := sim.col_of(p)
+	if c.leader_id != p.id or c.bandit:
+		return true
+	if Vector2(dest).distance_to(Vector2(c.home)) <= 10.0:
+		return true
+	var so := sim.states.owner_at(dest)
+	if so == c.civ_id:
+		return true
+	if so < 0 and sim.states.owned_by(c.civ_id).is_empty() and Vector2(dest).distance_to(Vector2(c.home)) <= 18.0:
+		return true
+	return false
+
+
 static func _go(sim: Sim, p: Human, dest: Vector2i) -> bool:
 	var from := sim.world.tile_of(p.pos)
 	if from == dest:
 		p.path = []
 		p.task["moving"] = false
 		return true
+	if not leader_may_go(sim, p, dest):
+		return false
 	var path := sim.paths.find_path(from, dest)
 	if path.is_empty():
 		return false
@@ -2072,6 +2089,10 @@ static func order_move(sim: Sim, p: Human, tile: Vector2i) -> bool:
 		for k in p.carrying.keys():
 			c.add(str(k), float(p.carrying[k]))     # drop what they carry into the stores
 		p.carrying = {}
+	if not leader_may_go(sim, p, dest):
+		if p.civ_id == 0:
+			sim.emit_signal("event", "%s is your leader and must stay inside your borders." % p.name, "warn")
+		return false
 	return _set_task(sim, p, "order", dest, PRIO_ORDER, {"label": "Moving (ordered)"})
 
 
@@ -2103,6 +2124,10 @@ static func order_attack(sim: Sim, p: Human, kind: String, target_id: int, prio 
 ## Soldiers march on an enemy tribe: they fight its people, then smash gates, walls and buildings.
 static func order_raid(sim: Sim, p: Human, civ_id: int, prio := PRIO_ORDER) -> bool:
 	if not p.alive or not p.can_work() or p.at_sea():
+		return false
+	if sim.col_of(p).leader_id == p.id:
+		if p.civ_id == 0:
+			sim.emit_signal("event", "%s is your leader and stays inside your borders." % p.name, "warn")
 		return false
 	var target := sim.civ(civ_id)
 	if target == null or target.collapsed:
@@ -2340,6 +2365,7 @@ static func hit_human(sim: Sim, attacker: Human, victim: Human, dmg: float) -> v
 		return
 	var vc := sim.col_of(victim)
 	dmg *= 1.0 - minf(0.6, vc.bonus("defense"))
+	dmg *= 1.0 - Warfare.armor_cut(sim, victim)
 	victim.health -= dmg
 	var sty := Fx.style_of(attacker)
 	Fx.hit(sim, victim.pos, attacker.pos, dmg, sty[0], true, sty[1])
@@ -2353,9 +2379,12 @@ static func hit_human(sim: Sim, attacker: Human, victim: Human, dmg: float) -> v
 	sim.on_tribes_clash(attacker.civ_id, victim.civ_id)
 	if victim.health <= 0.0 and victim.alive:
 		sim.col_of(attacker).enemy_kills += 1
+		var was_lead := vc.leader_id == victim.id
+		var was_war := sim.at_war(attacker.civ_id, victim.civ_id)
 		sim.kill(victim, "killed by %s of the %s" % [attacker.name, sim.col_of(attacker).name])
 		if attacker.civ_id == 0:
 			sim.emit_signal("event", "%s killed %s of the %s." % [attacker.name, victim.name, vc.name], "warn")
+		Warfare.on_kill(sim, attacker.civ_id, vc.civ_id, victim.name, was_lead, was_war)
 		return
 	# fight back (or run if badly hurt); nearby tribesmates join in
 	for q in vc.living():
@@ -2365,7 +2394,7 @@ static func hit_human(sim: Sim, attacker: Human, victim: Human, dmg: float) -> v
 			continue
 		if int(q.task.get("prio", 0)) == PRIO_ORDER and str(q.task.get("type", "")) == "attack":
 			continue
-		if q.health < 30.0 or (q.job != "soldier" and sim.at_war(q.civ_id, attacker.civ_id) and not vc.soldiers().is_empty()):
+		if q.health < 30.0 or q.id == vc.leader_id or (q.job != "soldier" and sim.at_war(q.civ_id, attacker.civ_id) and not vc.soldiers().is_empty()):
 			var home := vc.drop_point(q.pos)
 			_set_task(sim, q, "flee", home, PRIO_FLEE, {"label": "Fleeing!"})
 		else:

@@ -921,6 +921,100 @@ func _lumber_test(i: int) -> void:
 			sim.stumps.size(), int(c.count("log")), str(sim.world.res_type[int(_nt.get("road_stump", 0))] != Defs.R.NONE)])
 
 
+## Round G: presets, killings and war, monthly war parties, conquest, leaders at home, leader
+## answers unanswered questions, armor: `-- --autotest --gtest`
+var _gt := {}
+func _g_test(i: int) -> void:
+	var c := sim.colony
+	if i == 2:
+		var saved := Config.rules.duplicate()
+		for pn in Config.PRESETS.keys():
+			Config.apply_preset(pn)
+			print("GT preset %s: hunger=%.2f aggr=%.2f cal=%.1f work=%.2f people=%d" % [pn, Config.rule("hunger_rate"), Config.rule("ai_aggression"), Config.rule("calendar_speed"), Config.rule("work_speed"), int(Config.rule("start_people"))])
+		Config.rules = saved
+		var ais: Array = sim.colonies.filter(func(o): return o.civ_id != 0 and not o.bandit and not o.collapsed)
+		var a: Colony = ais[0]
+		var b: Colony = ais[1]
+		# war chance from killings
+		var wars := 0
+		var lwars := 0
+		for k in 400:
+			sim.wars.erase(sim._key(a.civ_id, b.civ_id))
+			Warfare.on_kill(sim, a.civ_id, b.civ_id, "Test", false, false)
+			if sim.at_war(a.civ_id, b.civ_id):
+				wars += 1
+			sim.wars.erase(sim._key(a.civ_id, b.civ_id))
+			Warfare.on_kill(sim, a.civ_id, b.civ_id, "Test", true, false)
+			if sim.at_war(a.civ_id, b.civ_id):
+				lwars += 1
+		sim.wars.erase(sim._key(a.civ_id, b.civ_id))
+		print("GT war after a killing: %d%%, after a leader killing: %d%%" % [wars / 4, lwars / 4])
+		# conquest by killing the leader in a war
+		for k in 4:
+			sim._make_human(b, "M" if k % 2 == 0 else "F", (25.0 + k) * Defs.AGE_YEAR_DAYS, sim.world.center_of(b.home) + Vector2(k * 4, 6))
+		Elections.hold(sim, b, "test")
+		sim.contacts[sim._key(a.civ_id, b.civ_id)] = true
+		sim.declare_war(a.civ_id, b.civ_id, true)
+		b.money = 77.0
+		var bl := sim.person(b.leader_id)
+		var ap: Human = a.living().filter(func(q): return q.is_adult())[0]
+		var a_pop := a.population()
+		var b_pop := b.population()
+		var b_states := sim.states.owned_by(b.civ_id).size()
+		var a_money := a.money
+		print("GT leader of %s: %s; far tile allowed=%s; home allowed=%s" % [b.name, bl.name if bl != null else "none",
+			HumanAI.leader_may_go(sim, bl, a.home) if bl != null else false, HumanAI.leader_may_go(sim, bl, b.home) if bl != null else false])
+		if bl != null:
+			bl.health = 1.0
+			HumanAI.hit_human(sim, ap, bl, 50.0)
+		print("GT conquest: %s collapsed=%s; %s pop %d -> %d (took %d), money %+d, states %d (+%d)" % [b.name, b.collapsed, a.name, a_pop, a.population(), b_pop - 1,
+			int(a.money - a_money), sim.states.owned_by(a.civ_id).size(), b_states])
+		# monthly war parties: you vs the nearest tribe
+		var o: Colony = null
+		for oc in sim.colonies:
+			if oc.civ_id != 0 and not oc.bandit and not oc.collapsed and oc != a:
+				o = oc
+				break
+		_gt["o"] = o.civ_id
+		sim.contacts[sim._key(0, o.civ_id)] = true
+		sim.declare_war(0, o.civ_id, true)
+		sim.test_no_peace = true
+		for k in 3:
+			sim._make_human(c, "M", (24.0 + k) * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2(k * 4, 6))
+			sim._make_human(o, "M", (24.0 + k) * Defs.AGE_YEAR_DAYS, sim.world.center_of(o.home) + Vector2(k * 4, 6))
+		sim.war_month = -1
+		Warfare.daily(sim)
+		var raiding := c.living().filter(func(q): return str(q.task.get("type", "")) == "raid").size()
+		var their := o.living().filter(func(q): return str(q.task.get("type", "")) == "raid").size()
+		print("GT war parties: ours %d marching, theirs %d marching (sent %d / %d)" % [raiding, their, c.war_parties_sent, o.war_parties_sent])
+		# armor
+		c.researched["hide_armor"] = true
+		c.researched["wicker_shields"] = true
+		c.invalidate_bonus()
+		var fighter: Human = c.living().filter(func(q): return str(q.task.get("type", "")) == "raid")[0] if raiding > 0 else c.living()[0]
+		print("GT armor tier %d, cut for a fighter %.2f, for a non-fighter %.2f" % [Warfare.armor_tier(c), Warfare.armor_cut(sim, fighter),
+			Warfare.armor_cut(sim, c.living().filter(func(q): return not Warfare.is_fighter(q))[0])])
+		# unanswered questions
+		sim.access_asks.append(a.civ_id if not a.collapsed else o.civ_id)
+		hud._refresh_passage()
+		hud._tick_popups(10.0)
+		var still := sim.access_asks.size()
+		hud._tick_popups(25.0)
+		print("GT passage ask open after 10s: %d, after 35s: %d" % [still, sim.access_asks.size()])
+		var sick: Human = c.living()[0]
+		Survival.infect(sim, sick, "plague", "test", true)
+		sick.health = 20.0
+		sim.exile_asks.append({"pid": sick.id})
+		hud._refresh_exile()
+		hud._tick_popups(31.0)
+		print("GT exile ask left: %d, sick still in tribe: %s" % [sim.exile_asks.size(), c.person(sick.id) != null])
+	if i > 2 and i % 4 == 0:
+		var o2 := sim.civ(int(_gt.get("o", 1)))
+		print("GT t%d: at war=%s, our raiders=%d, their raiders=%d, parties %d/%d, our pop %d, their pop %d, collapsed %s/%s" % [i, sim.at_war(0, o2.civ_id),
+			c.living().filter(func(q): return str(q.task.get("type", "")) == "raid").size(), o2.living().filter(func(q): return str(q.task.get("type", "")) == "raid").size(),
+			c.war_parties_sent, o2.war_parties_sent, c.population(), o2.population(), c.collapsed, o2.collapsed])
+
+
 ## Round F: road networks, allied road building, splits, civil war, sending the sick away,
 ## bonus buildings, trade range: `-- --autotest --ftest`
 var _ft := {}
@@ -1559,6 +1653,8 @@ func _autotest() -> void:
 			_e_test(i)
 		if _args.has("--ftest"):
 			_f_test(i)
+		if _args.has("--gtest"):
+			_g_test(i)
 		if _args.has("--raidtest") and i == 2:
 			_raid_setup()
 		if _args.has("--raidtest") and i > 2:

@@ -61,6 +61,7 @@ var play_secs := 0.0            # real seconds played while unpaused (diplomacy 
 var diplo_cd := {}              # "a>b:kind" -> play_secs when that request may be made again
 var stumps := {}                # tile index -> [tree type, sim day felled]: trees that will grow back
 var road_tiles := {}            # tile index -> civ id of the tribe that built it
+var war_month := -1             # calendar month of the last war-party muster (Warfare)
 var shared_road_tiles := 0      # road tiles allies laid for each other (tests)
 var road_version := 0           # bumped whenever a road is laid or taken up (maps redraw)
 var history: Array = []         # [date text, text, kind]: the world history (pause menu)
@@ -580,6 +581,7 @@ func _daily() -> void:
 		# a trickle of Talents from crafts and beachcombing keeps money moving between tribes
 		c.money += Config.rule("shell_income") * c.population()
 	_drift_relations()
+	Warfare.daily(self)
 	_regrow(season)
 	_regrow_trees(season)
 	AnimalAI.daily(self)
@@ -1183,6 +1185,7 @@ func damage_building(b: Building, dmg: float, attacker_civ: int) -> bool:
 	if attacker_civ == 0:
 		emit_signal("event", "Your soldiers destroyed the %s's %s." % [c.name, b.display_name()], "good")
 	destroy_building(b)
+	Warfare.on_building_destroyed(self, b, attacker_civ)
 	return true
 
 
@@ -1480,11 +1483,15 @@ func _update_towers(dt: float) -> void:
 				b.shoot_cd = float(sh["cd"])
 				tower_shots.append([center, target.pos, flight, ammo, flight])
 				if rng.randf() < 0.7:
-					target.health -= float(sh["dmg"]) * (1.0 - minf(0.6, col_of(target).bonus("defense")))
+					target.health -= float(sh["dmg"]) * (1.0 - minf(0.6, col_of(target).bonus("defense"))) * (1.0 - Warfare.armor_cut(self, target))
 					Fx.hit(self, target.pos, target.pos + Vector2(0, -20), float(sh["dmg"]), "pierce")
 					Fx.hurt(target, target.pos + Vector2(0, -20))
 					if target.health <= 0.0:
+						var tc := col_of(target)
+						var was_lead := tc.leader_id == target.id
+						var was_war := at_war(c.civ_id, tc.civ_id)
 						kill(target, "shot from a %s of the %s" % [b.display_name().to_lower(), c.name])
+						Warfare.on_kill(self, c.civ_id, tc.civ_id, target.name, was_lead, was_war)
 				continue
 			if bool(sh.get("siege", false)):
 				continue
@@ -1785,7 +1792,7 @@ func to_dict() -> Dictionary:
 		"next_id": next_id, "next_animal_id": next_animal_id, "next_bid": next_bid,
 		"ships": ships.map(func(sh): return sh.to_dict()), "next_ship_id": next_ship_id,
 		"used_names": used_names.keys(), "rng": rng.state, "last_day": _last_day,
-		"defect_asks": defect_asks.duplicate(true), "exile_asks": exile_asks.duplicate(true), "borders": Borders.to_dict(self), "play_secs": play_secs, "diplo_cd": diplo_cd.duplicate(), "roads": road_tiles.keys(), "road_civ": road_tiles.values(), "history": history.duplicate(true), "stumps_i": stumps.keys(), "stumps_v": stumps.values(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
+		"defect_asks": defect_asks.duplicate(true), "exile_asks": exile_asks.duplicate(true), "borders": Borders.to_dict(self), "play_secs": play_secs, "war_month": war_month, "diplo_cd": diplo_cd.duplicate(), "roads": road_tiles.keys(), "road_civ": road_tiles.values(), "history": history.duplicate(true), "stumps_i": stumps.keys(), "stumps_v": stumps.values(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
 	}
 
 
@@ -1866,6 +1873,7 @@ func from_dict(d: Dictionary) -> void:
 		road_tiles[i] = int(rciv[n]) if n < rciv.size() else 0
 	road_version += 1
 	history = d.get("history", [])
+	war_month = int(d.get("war_month", -1))
 	_hook_history()
 	for c in colonies:
 		refresh_zones(c)

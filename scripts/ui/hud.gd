@@ -421,6 +421,77 @@ func _on_deal_answer(how: String) -> void:
 	_refresh_deal()
 
 
+# ================================================================ unanswered questions
+## Any question left open for 30 seconds of play is decided by the tribe's leader.
+var _pop_timers := {}            # popup key -> seconds open (only while the game runs)
+var _pop_labels := {}            # panel -> countdown label
+
+
+func _pop_label(panel: PanelContainer) -> Label:
+	if not _pop_labels.has(panel):
+		var l := _label("", 12, Color(0.75, 0.72, 0.62))
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		(panel.get_child(0) as VBoxContainer).add_child(l)
+		_pop_labels[panel] = l
+	return _pop_labels[panel]
+
+
+func _open_popups() -> Dictionary:
+	var sim: Sim = game.sim
+	var out := {}
+	if passage_panel.visible:
+		if passage_defect and not sim.defect_asks.is_empty():
+			out["defect:%d" % int(sim.defect_asks[0]["from"])] = passage_panel
+		elif passage_civ >= 0:
+			out["passage:%d" % passage_civ] = passage_panel
+	if deal_panel.visible and not sim.deal_offers.is_empty():
+		out["deal:%d" % int(sim.deal_offers[0]["id"])] = deal_panel
+	if exile_panel.visible and exile_pid >= 0:
+		out["exile:%d" % exile_pid] = exile_panel
+	return out
+
+
+func _tick_popups(delta: float) -> void:
+	var open := _open_popups()
+	for k in _pop_timers.keys():
+		if not open.has(k):
+			_pop_timers.erase(k)
+	var running: bool = not game.paused and not game.menu_paused
+	for k in open.keys():
+		var t := float(_pop_timers.get(k, 0.0)) + (delta if running else 0.0)
+		_pop_timers[k] = t
+		var left := ceili(LeaderChoice.WAIT - t)
+		_pop_label(open[k]).text = "If you don't answer, %s decides in %ds." % [LeaderChoice.who(game.sim), maxi(0, left)]
+		if t >= LeaderChoice.WAIT:
+			_pop_timers.erase(k)
+			_leader_decides(str(k))
+			return
+
+
+func _leader_decides(key: String) -> void:
+	var sim: Sim = game.sim
+	var who := LeaderChoice.who(sim)
+	if key.begins_with("passage:"):
+		var cid := int(key.substr(8))
+		var yes := LeaderChoice.passage(sim, cid)
+		_on_passage(yes)
+		push_event("%s %s the %s passage through your land." % [who, "granted" if yes else "refused", sim.civ(cid).name], "info")
+	elif key.begins_with("defect:"):
+		var yes2 := LeaderChoice.defectors(sim, sim.defect_asks[0])
+		_on_passage(yes2)
+		push_event("%s %s the people who wanted to join you." % [who, "welcomed" if yes2 else "turned away"], "info")
+	elif key.begins_with("deal:"):
+		var o: Dictionary = sim.deal_offers[0]
+		var how := LeaderChoice.deal(sim, o)
+		var from := sim.civ(int(o["from"])).name
+		push_event("%s %s the %s's offer." % [who, LeaderChoice.deal_word(how), from], "info")
+		_on_deal_answer(how)
+	elif key.begins_with("exile:"):
+		var yes3 := LeaderChoice.exile(sim, sim.exile_asks[0])
+		push_event("%s decided: %s." % [who, "send them away" if yes3 else "keep and care for them"], "info")
+		_on_exile(yes3)
+
+
 # ================================================================ FPS counter
 var fps_label: Label
 
@@ -1552,6 +1623,12 @@ When someone is badly sick with something catching, your people may ask you to s
 [b]Trading distance[/b]
 Traders go up to 250 tiles (home to home); Trade Wagons add 200 more. Both can be changed in Game Rules.
 
+[b]War[/b]
+Killing someone of another tribe can start a war (60%; killing their leader, 90%). Tribes at war send an attack party at each other every month — without soldiers, a militia of able adults goes. Leaders never leave their own land. Kill an enemy's leader or burn their Capitol during a war and you conquer them: their people, goods, Talents and land become yours (and the same can happen to you!). Research armor in each age (Hide, Wicker & Leather, Bronze Scale, Iron Mail) to protect your fighters. Long wars wear your people down.
+
+[b]Unanswered questions[/b]
+If you don't answer a request (passage, trade, alliance, demands, newcomers, the sick) within 30 seconds of play, your leader decides for you.
+
 [b]War structures[/b]
 Every age has a defensive post (Rock Lookout → Sling Platform → Bronze Bastion → Ballista Tower) that shoots enemies and predators, and offensive works (War Drum Circle, Ram Shed, Catapult, Trebuchet) that make your soldiers stronger or smash enemy buildings from afar. Research them in the Military row.
 
@@ -2304,6 +2381,7 @@ func _process(delta: float) -> void:
 		hint_label.text = "Placing %s — left-click to place, right-click to cancel.  %s" % [Defs.BUILDINGS[mode]["name"], err]
 	else:
 		hint_label.text = ""
+	_tick_popups(delta)
 	_refresh_t -= delta
 	if _refresh_t > 0.0:
 		return
@@ -2458,6 +2536,8 @@ func _info_civ(sim: Sim, oc: Colony) -> void:
 			s += "[color=#9fe08a]They are offering peace.[/color]\n"
 			acts.append(["Accept their peace", _on_accept_peace.bind(oc.civ_id)])
 		acts.append(["Offer peace" + _wait_tag(oc.civ_id, "peace"), _on_offer_peace.bind(oc.civ_id)])
+		acts.append(["Send a war party now", _on_war_party.bind(oc.civ_id)])
+		s += "[color=#a09a88]At war for %d months. Monthly war parties march on their own; kill their leader or burn their Capitol to conquer them.[/color]\n" % int(Warfare.war_months(sim, sim.colony))
 	else:
 		var why := sim.war_problem(0, oc.civ_id)
 		if why == "":
@@ -2639,6 +2719,12 @@ func _leader_text(sim: Sim, c: Colony, detail: bool) -> String:
 func _on_declare_war(cid: int) -> void:
 	if game.sim.declare_war(0, cid):
 		_actions_sig = ""
+
+
+func _on_war_party(cid: int) -> void:
+	var n := Warfare.send_party(game.sim, game.sim.colony, game.sim.civ(cid))
+	if n == 0:
+		push_event("No one is fit to march — you need at least 2 healthy fighters (soldiers or able adults).", "warn")
 
 
 func _on_offer_peace(cid: int) -> void:

@@ -461,3 +461,14 @@ Tuning lives almost entirely in `scripts/world/defs.gd`. That includes day lengt
 - **Sending the sick away**: your tribe asks whether a badly sick, contagious person should be sent away. AI tribes decide themselves.
 - **Bonus buildings** (2 per age, expensive, each kind counts at most twice): Shaman's Circle, Great Hearth, Flint Works, Stone Calendar, Marketplace, Bathhouse, Academy, Iron Foundry.
 - **Trading distance**: World settings *Trading distance* (default 250 tiles) and *Extra distance with Trade Wagons* (default +200).
+
+## Round G additions
+
+- **Rule presets** on the new-world screen, the Game Rules page and Settings: Easy, Medium, Hard, Fast-paced, Slow-paced.
+- **Killings start wars**: 60% chance when someone is killed by another tribe, 90% when it's the leader (both in Game Rules).
+- **Monthly war parties**: tribes at war send an attack party at each other every month, in every age. Tribes without soldiers send a militia of able adults. You can also send one any time ("Send a war party now").
+- **Leaders stay home**: a leader never leaves their tribe's land, won't join raids and runs from fights.
+- **Conquest**: killing an enemy leader, or burning their Capitol, during a war conquers the whole tribe. The winner gets its people, goods, Talents, land and buildings.
+- **Armor** (Military row): Hide Armor, Wicker Shields & Leather, Bronze Scale Armor, Iron Mail. Each tier cuts the damage soldiers and war-party fighters take, and fighters show it.
+- **War weariness**: long wars lower the tribe's mood; conquests raise it.
+- **Unanswered questions**: if you don't answer a passage request, trade/alliance/tribute/land offer, newcomers or a sick-person question within 30 seconds of play, your leader decides. A countdown shows on each card.
