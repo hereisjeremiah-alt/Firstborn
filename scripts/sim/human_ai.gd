@@ -139,6 +139,9 @@ static func _choose_task(sim: Sim, p: Human) -> void:
 	if p.is_adult() and not sim.col_of(p).clear_marks.is_empty() and p.job in ["woodcutter", "laborer", "gatherer", "builder", "miner"] \
 			and sim.rng.randf() < 0.7 and _plan_clear(sim, p):
 		return
+	if p.is_adult() and not sim.col_of(p).wreck_marks.is_empty() and not p.job in ["researcher", "healer", "trader", "cook"] \
+			and sim.rng.randf() < 0.5 and _plan_wreck(sim, p):
+		return
 	if p.is_adult() and not sim.col_of(p).road_marks.is_empty() and p.job in ["laborer", "builder", "gatherer", "woodcutter"] \
 			and sim.rng.randf() < 0.6 and _plan_road(sim, p):
 		return
@@ -251,7 +254,7 @@ static func _go(sim: Sim, p: Human, dest: Vector2i) -> bool:
 ## stop at a border, and neither do the player's own direct orders.
 static func _needs_passage(p: Human) -> bool:
 	var ty := str(p.task.get("type", ""))
-	if ty in ["attack", "raid", "flee", "board", "rob", "bandit_home"] or p.job == "bandit":
+	if ty in ["attack", "raid", "flee", "board", "rob", "bandit_home", "wreck"] or p.job == "bandit":
 		return false
 	var prio := int(p.task.get("prio", 0))
 	if ty == "claim":
@@ -314,6 +317,19 @@ static func _run(sim: Sim, p: Human, dt: float) -> void:
 	var t := p.task
 	var type := str(t["type"])
 	p.state = str(t.get("label", type))
+	# dementia: now and then they stop in the middle of a task, having forgotten what it was
+	if p.conditions.has("dementia") and int(t.get("prio", 0)) >= PRIO_JOB and int(t.get("prio", 0)) < PRIO_RAID and type != "confused":
+		if sim.rng.randf() < (0.004 + 0.02 * p.dementia_level()) * dt:
+			_abort(sim, p)
+			p.task = {"type": "confused", "prio": PRIO_JOB + 5, "moving": false, "work": 0.0,
+				"wait": sim.rng.randf_range(3.0, 8.0), "label": "Forgot what they were doing"}
+			p.state = "Forgot what they were doing"
+			return
+	if type == "confused":
+		t["work"] = float(t["work"]) + dt
+		if float(t["work"]) >= float(t["wait"]):
+			_done(sim, p)
+		return
 	if type == "hunt":
 		_do_hunt(sim, p, dt)
 		return
@@ -345,6 +361,8 @@ static func _run(sim: Sim, p: Human, dt: float) -> void:
 	match type:
 		"harvest":
 			_do_harvest(sim, p, dt)
+		"wreck":
+			_do_wreck(sim, p, dt)
 		"haul":
 			_do_haul(sim, p)
 		"drink_stock":
@@ -363,6 +381,8 @@ static func _run(sim: Sim, p: Human, dt: float) -> void:
 			if p.hunger < 45.0:
 				_task_forage(sim, p)
 		"sleep":
+			if not p.sleeping:
+				_go_inside(sim, p)
 			p.sleeping = true
 			p.state = "Sleeping"
 		"rest":
@@ -543,6 +563,21 @@ static func _rest_spot(sim: Sim, p: Human) -> Vector2i:
 	return spot if spot.x >= 0 else base
 
 
+## A person who reached their hut or house goes in and lies down inside it.
+static func _go_inside(sim: Sim, p: Human) -> void:
+	if p.bed_id < 0:
+		return
+	var b := sim.building(p.bed_id)
+	if b == null or not b.built or b.housing() <= 0:
+		return
+	if b.center().distance_to(p.pos) > Defs.TILE * 3.0:
+		return
+	var k := b.occupants.find(p.id)
+	var slot := Vector2(float((maxi(0, k) % 3) - 1) * 3.0, float(maxi(0, k) / 3) * 2.0 - 1.0)
+	p.pos = b.center() + slot
+	p.path = []
+
+
 static func _sleep_tick(sim: Sim, p: Human, dt: float) -> void:
 	var resting := str(p.task.get("type", "")) == "rest"
 	p.state = "Resting (sick)" if resting else "Sleeping"
@@ -613,6 +648,8 @@ static func _task_follow_parent(sim: Sim, p: Human) -> void:
 		mom = sim.person(p.father_id)
 	if mom != null and mom.alive:
 		if mom.sleeping and sim.world.tile_of(mom.pos).distance_squared_to(sim.world.tile_of(p.pos)) <= 2:
+			if sim.indoors(mom) != null:
+				p.pos = mom.pos + Vector2(3, 1)       # the little ones sleep inside with their parents
 			p.sleeping = true
 			p.task = {"type": "sleep", "prio": PRIO_SLEEP, "label": "Sleeping"}
 			return
@@ -1727,6 +1764,69 @@ static func _do_road(sim: Sim, p: Human, dt: float) -> void:
 		_done(sim, p)
 
 
+## Severe dementia: the person wanders off somewhere, lost.
+static func order_wander_off(sim: Sim, p: Human, dest: Vector2i) -> void:
+	if int(p.task.get("prio", 0)) >= PRIO_REST:
+		return
+	_set_task(sim, p, "wander", dest, PRIO_JOB + 6, {"label": "Wandering, lost and confused", "wait": sim.rng.randf_range(4.0, 10.0)})
+
+
+## At war: walk to the nearest marked enemy road and tear it up.
+static func _plan_wreck(sim: Sim, p: Human) -> bool:
+	var c := sim.col_of(p)
+	var here := sim.world.tile_of(p.pos)
+	var best := Vector2i(-1, -1)
+	var best_d := 1e18
+	var drop: Array = []
+	for i in c.wreck_marks.keys():
+		var ii := int(i)
+		var owner := int(sim.road_tiles.get(ii, -1))
+		if sim.world.road[ii] == 0 or owner < 0 or not sim.at_war(c.civ_id, owner):
+			drop.append(i)
+			continue
+		if sim.claims.has(ii):
+			continue
+		var q := Vector2i(ii % sim.world.w, ii / sim.world.w)
+		var d := Vector2(q).distance_squared_to(Vector2(here))
+		if d < best_d:
+			best_d = d
+			best = q
+	for i in drop:
+		c.wreck_marks.erase(i)
+	if best.x < 0:
+		return false
+	var stand := best
+	if sim.world.road[sim.world.idx(best)] == 2:
+		stand = sim.world.walkable_near(best, 2)       # a bridge is hacked apart from its end
+		if stand.x < 0:
+			stand = best
+	if _set_task(sim, p, "wreck", stand, PRIO_JOB + 2, {"tile": best, "label": "Tearing up an enemy road"}):
+		sim.claim(best, p.id)
+		return true
+	return false
+
+
+static func _do_wreck(sim: Sim, p: Human, dt: float) -> void:
+	var t := p.task
+	var tile: Vector2i = t["tile"]
+	var i := sim.world.idx(tile)
+	var c := sim.col_of(p)
+	var owner := int(sim.road_tiles.get(i, -1))
+	if sim.world.road[i] == 0 or owner < 0 or not sim.at_war(c.civ_id, owner):
+		c.wreck_marks.erase(i)
+		sim.claims.erase(i)
+		_done(sim, p)
+		return
+	t["work"] = float(t["work"]) + dt
+	if float(t["work"]) < 5.0:
+		return
+	sim.wreck_road(c, i)
+	sim.claims.erase(i)
+	Fx.smash(sim, sim.world.center_of(tile), p.pos)
+	if not _plan_wreck(sim, p):
+		_done(sim, p)
+
+
 # ================================================================ blacksmith
 static func _plan_smith(sim: Sim, p: Human) -> bool:
 	var c := sim.col_of(p)
@@ -2046,7 +2146,7 @@ static func _engage(sim: Sim, p: Human, t: Dictionary, dt: float) -> String:
 			if not ranged:
 				Fx.lunge(p, tpos)
 			if kind == "building":
-				sim.damage_building(sim.building(tid), strike_damage(sim, p, false) * (0.5 if ranged else 1.0), p.civ_id)
+				sim.damage_building(sim.building(tid), strike_damage(sim, p, false) * (0.5 if ranged else 1.0) * (1.0 + sim.col_of(p).bonus("siege")), p.civ_id)
 				Fx.smash(sim, tpos, p.pos)
 				p.gain_skill("soldier", 0.02)
 			elif sim.rng.randf() < 0.55 + skill * 0.03 + (c.bonus("hunt_hit") if kind == "animal" else 0.0):

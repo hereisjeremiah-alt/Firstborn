@@ -19,6 +19,7 @@ var father_id := -1
 var mother_id := -1
 var children: Array = []
 var illness := {}      # {"type": String, "days": float, "treated": float}
+var conditions := {}   # chronic: "dementia" / "obesity" / "diabetes" -> age when it began (see Conditions)
 var immune_days := 0.0
 var immunities: Array = []
 var race := 0             # index into Config.races
@@ -74,7 +75,18 @@ func stage() -> String:
 
 
 func can_work() -> bool:
-	return age_years() >= Config.rule("work_age")
+	return age_years() >= Config.rule("work_age") and not dementia_harmful()
+
+
+## How far dementia has gone: 0 (none) .. 1 (at 70, when it does more harm than good).
+func dementia_level() -> float:
+	if not conditions.has("dementia"):
+		return 0.0
+	return clampf(0.15 + (age_years() - 45.0) / 25.0 * 0.85, 0.15, 1.0)
+
+
+func dementia_harmful() -> bool:
+	return conditions.has("dementia") and age_years() >= 70.0
 
 
 ## True while away on a trading voyage (at sea, not drawn on the map).
@@ -132,6 +144,12 @@ func work_mult(job_name: String) -> float:
 		m *= 0.75
 	if frail:
 		m *= 0.85
+	if not conditions.is_empty():
+		m *= 1.0 - 0.55 * dementia_level()
+		if conditions.has("obesity"):
+			m *= 0.9
+		if conditions.has("diabetes"):
+			m *= 0.9
 	return m * (1.0 + skill(job_name) * 0.05)
 
 
@@ -146,6 +164,8 @@ func speed_mult() -> float:
 		m *= 0.75
 	elif a > 62.0:
 		m *= 0.8
+	if conditions.has("obesity"):
+		m *= 0.85
 	return m
 
 
@@ -154,7 +174,7 @@ func to_dict() -> Dictionary:
 		"id": id, "civ": civ_id, "name": name, "gender": gender, "age": age_days, "health": health,
 		"hunger": hunger, "thirst": thirst, "energy": energy, "warmth": warmth, "skills": skills.duplicate(),
 		"job": job, "partner": partner_id, "father": father_id, "mother": mother_id,
-		"children": children.duplicate(), "illness": illness.duplicate(), "immune": immune_days, "immunities": immunities.duplicate(), "race": race, "weapon": weapon,
+		"children": children.duplicate(), "illness": illness.duplicate(), "cond": conditions.duplicate(), "immune": immune_days, "immunities": immunities.duplicate(), "race": race, "weapon": weapon,
 		"pregnant": pregnant_days, "alive": alive, "cause": cause, "x": pos.x, "y": pos.y,
 		"carrying": carrying.duplicate(), "bed": bed_id, "clothed": clothed, "aboard": aboard, "frail": frail, "skind": soldier_kind, "hired": hired, "drafted": drafted,
 	}
@@ -179,6 +199,7 @@ static func from_dict(d: Dictionary) -> Human:
 	p.mother_id = int(d["mother"])
 	p.children = d.get("children", [])
 	p.illness = d.get("illness", {})
+	p.conditions = d.get("cond", {})
 	p.immune_days = float(d.get("immune", 0.0))
 	p.immunities = d.get("immunities", [])
 	p.race = int(d.get("race", 0))

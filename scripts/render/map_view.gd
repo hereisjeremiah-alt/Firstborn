@@ -9,6 +9,9 @@ var territory_mode := false     # political map (needs a Map Table)
 var _terr_tex: ImageTexture
 var _border_tex: ImageTexture
 var _tex_version := -1
+var _road_tex: ImageTexture
+var _road_version := -1
+var _road_t := 0.0
 var zoomable := false            # the big World Map: mouse wheel zooms, right/middle-drag pans
 var map_zoom := 1.0
 var map_center := Vector2(0.5, 0.5)   # point of the map (0..1) at the middle of the view
@@ -69,7 +72,37 @@ func _process(_delta: float) -> void:
 			_tex_version = game.sim.states.version
 			_terr_tex = make_state_texture(game.sim, true) if size.x >= 300.0 else null
 			_border_tex = make_state_texture(game.sim, false)
+		if game != null and game.sim != null and game.sim.world != null and _road_version != game.sim.road_version:
+			_road_t -= _delta
+			if _road_t <= 0.0 or _road_tex == null:
+				_road_t = 1.0
+				_road_version = game.sim.road_version
+				_road_tex = make_road_texture(game.sim)
 		queue_redraw()
+
+
+## Every road and bridge, in the colour of the tribe that built it, with a dark edge so it
+## stands out on both the terrain and the territory map.
+static func make_road_texture(sim: Sim) -> ImageTexture:
+	var wm := sim.world
+	var img := Image.create(wm.w, wm.h, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var edge := Color(0.05, 0.04, 0.03, 0.75)
+	for i in sim.road_tiles.keys():
+		var ii := int(i)
+		var x := ii % wm.w
+		var y := ii / wm.w
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx: int = x + d.x
+			var ny: int = y + d.y
+			if nx >= 0 and ny >= 0 and nx < wm.w and ny < wm.h and wm.road[ny * wm.w + nx] == 0:
+				img.set_pixel(nx, ny, edge)
+	for i in sim.road_tiles.keys():
+		var ii := int(i)
+		var ow := int(sim.road_tiles[i])
+		var col := sim.civ(ow).color.lightened(0.2) if ow >= 0 and ow < sim.colonies.size() else Color(0.85, 0.75, 0.55)
+		img.set_pixel(ii % wm.w, ii / wm.w, col)
+	return ImageTexture.create_from_image(img)
 
 
 ## Political map: every state filled with its owner's colour (unclaimed land in grey) with thin
@@ -126,6 +159,8 @@ func _draw() -> void:
 	var sm: StateMap = sim.states
 	var big := size.x >= 300.0
 	var k := r.size.x / float(sim.world.w * Defs.TILE)
+	if _road_tex != null and not game.picking:
+		draw_texture_rect(_road_tex, r, false)
 	var fog: Fog = sim.fog
 	if fog.on:
 		draw_texture_rect(fog.texture, r, false)

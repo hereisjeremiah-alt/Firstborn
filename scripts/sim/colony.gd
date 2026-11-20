@@ -33,6 +33,9 @@ var recent_robbed := 0.0     # days the tribe remembers being robbed by bandits
 var defect_year := 0         # calendar year of the last defection check
 var trade_orders: Array = [] # the player's trade orders, carried out by traders (Trade)
 var zones := {}              # tile index -> zone (Defs.ZONES)
+var wreck_marks := {}        # tile index -> true: enemy roads to tear up (at war)
+var auto_roads := true       # the tribe lays its own roads between its buildings
+var road_tried := {}         # building id -> true: already given a road (not saved)
 var road_marks := {}         # tile index -> true: roads the player has laid out, still to be built
 var backed_id := -1          # the candidate the player backs at the next election
 var campaign := {}           # candidate id -> campaign strength bought with Talents and gifts
@@ -49,8 +52,9 @@ var leader_fx := {}          # work bonus from the leader's trade
 var next_election := 0.0     # calendar year of the next election
 var last_election := {}
 var now_years := 0.0         # current calendar year (kept up to date by Sim)
-var auto_convert := false    # researchers turn KP into RP automatically
-var auto_research := false   # ... and spend it on the cheapest available tech
+var auto_convert := true     # researchers turn KP into RP automatically
+var auto_research := true    # ... and spend it on the cheapest available tech
+var auto_advance := false    # move on to the next age as soon as it's paid for
 var auto_expand := true      # send people to claim free neighbouring states
 var cheat := false           # cheat mode: free, instant building and everything unlocked
 var trade_log: Array = []    # recent trades (text), newest last
@@ -292,8 +296,14 @@ func bonus(key: String) -> float:
 	for id in researched.keys():
 		var fx: Dictionary = Defs.TECHS[id]["fx"]
 		v += float(fx.get(key, 0.0))
+	var once := key == "soldier" or key == "siege" or key == "defense"
+	var seen := {}
 	for b in buildings:
 		if b.built:
+			if once:
+				if seen.has(b.type):
+					continue          # war structures count once each, however many you build
+				seen[b.type] = true
 			v += float(b.def().get(key, 0.0)) * (1.25 if b.zoned else 1.0)
 	if government != "":
 		var gfx: Dictionary = Defs.GOVERNMENTS[government]["fx"]
@@ -568,10 +578,10 @@ func to_dict() -> Dictionary:
 		"race": race, "flag": FlagArt.to_save(flag), "gov": government, "gov_pending": gov_pending, "clear": clear_marks.keys(),
 		"wall_ring": wall_ring, "wall_tier": wall_tier, "weapon_orders": weapon_orders.duplicate(),
 		"era_start": era_start_year, "bonus_years": bonus_years, "auto_convert": auto_convert, "auto_research": auto_research,
-		"auto_expand": auto_expand, "cheat": cheat,
+		"auto_expand": auto_expand, "auto_advance": auto_advance, "cheat": cheat,
 		"leader": leader_id, "leader_title": leader_title, "leader_terms": leader_terms, "leader_fx": leader_fx.duplicate(),
 		"next_election": next_election, "last_election": last_election.duplicate(true),
-		"zones_i": zones.keys(), "zones_v": zones.values(), "roads": road_marks.keys(), "backed": backed_id,
+		"zones_i": zones.keys(), "zones_v": zones.values(), "roads": road_marks.keys(), "wreck": wreck_marks.keys(), "auto_roads": auto_roads, "backed": backed_id,
 		"campaign": campaign.duplicate(), "rigged": rigged, "unrest": unrest_until, "milestones": milestones.duplicate(),
 		"enemy_kills": enemy_kills, "deals": deals_made, "elections_held": elections_held,
 		"bandit": bandit, "approval": approval, "defect_year": defect_year, "trade_orders": trade_orders.duplicate(true)}
@@ -621,6 +631,7 @@ func from_dict(d: Dictionary) -> void:
 	auto_convert = bool(d.get("auto_convert", false))
 	auto_research = bool(d.get("auto_research", false))
 	auto_expand = bool(d.get("auto_expand", civ_id != 0))
+	auto_advance = bool(d.get("auto_advance", false))
 	cheat = bool(d.get("cheat", false))
 	leader_id = int(d.get("leader", -1))
 	leader_title = str(d.get("leader_title", ""))
@@ -633,6 +644,10 @@ func from_dict(d: Dictionary) -> void:
 	var zv: Array = d.get("zones_v", [])
 	for k in zi.size():
 		zones[int(zi[k])] = int(zv[k])
+	wreck_marks.clear()
+	for i in d.get("wreck", []):
+		wreck_marks[int(i)] = true
+	auto_roads = bool(d.get("auto_roads", true))
 	road_marks.clear()
 	for i in d.get("roads", []):
 		road_marks[int(i)] = true

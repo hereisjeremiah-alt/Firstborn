@@ -3,7 +3,7 @@ extends RefCounted
 ## Multiple save slots in user://saves. The world is regenerated from its seed on load,
 ## then every changed piece of state (resources, people, buildings, animals, time, weather) is restored.
 
-const SLOTS := 3
+const SLOTS := 6
 const DIR := "user://saves"
 
 

@@ -437,3 +437,16 @@ Tuning lives almost entirely in `scripts/world/defs.gd`. That includes day lengt
 - **Age of consent** rule (People): 18–21, default 18.
 - **Saves**: the pause menu has separate *Save Game…* and *Load Game…* pages.
 - **Tech announcements**: every new technology shows a banner at the top of the screen with what it unlocks.
+
+## Round E additions
+
+- **Research**: the Convert button and tooltips use the KP-per-RP rule from Game Rules. New *Auto-advance age* option. Auto-convert, auto-research and auto-claim land start switched on.
+- **Saves**: 6 slots. The pause menu's *Main Menu* asks "Are you sure?" first. New *World History* page lists wars, peace, ages, leaders, techs and fallen tribes.
+- **Roads**: every tribe (yours too, toggle in Plan Town) lays roads from its buildings to the nearest road or campfire. Roads show on the World Map and Territory view in the builder's colour.
+  At war, the *Remove road* tool marks an enemy's roads and your Billies tear them up; AI tribes do the same to yours.
+- **Plan Town**: Ctrl+Z / Ctrl+Y (and Undo / Redo buttons). Zones stay visible while placing buildings. Tribes build into painted zones of the right kind first.
+- **Sleeping**: Billies go inside their hut or house to sleep (z's float over the roof).
+- **War structures** (Military row, every age): Rock Lookout, War Drum Circle (Caveman); Sling Platform, Ram Shed (Stone); Bronze Bastion, Catapult (Bronze); Ballista Tower, Trebuchet (Iron).
+  Lookouts and towers shoot enemies and predators; drums, rams and siege engines boost soldiers or hurl boulders at enemy buildings.
+- **Long illnesses**: Dementia (45+, worse with age, forgets tasks, harmful from 70), Obesity (makes diabetes 25% likelier), Type 2 Diabetes.
+- **Music**: 10 new pieces (20 in all), including brass marches (*March of the Tribe*, *Bronze Legion*, *War Horns*), still shuffled. A chime plays when you research a tech by hand.

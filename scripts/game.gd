@@ -303,6 +303,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		if k.shift_pressed and (k.keycode == KEY_PLUS or k.keycode == KEY_EQUAL or k.keycode == KEY_KP_ADD):
 			_cheat_key()
 			return
+		if (k.ctrl_pressed or k.meta_pressed) and k.keycode == KEY_Z:
+			if k.shift_pressed:
+				plan_redo()
+			else:
+				plan_undo()
+			return
+		if (k.ctrl_pressed or k.meta_pressed) and k.keycode == KEY_Y:
+			plan_redo()
+			return
 		match k.keycode:
 			KEY_ESCAPE:
 				if tool_mode != "":
@@ -461,8 +470,70 @@ func road_tiles_between(a: Vector2, b: Vector2) -> Array:
 	return out
 
 
-## Applies a zone, road or road-removal drag from the town planner.
+# ---------------------------------------------------------------- town planner undo / redo
+var plan_undo_stack: Array = []
+var plan_redo_stack: Array = []
+
+
+func _plan_state() -> Dictionary:
+	var c := sim.colony
+	return {"z": c.zones.duplicate(), "r": c.road_marks.duplicate(), "w": c.wreck_marks.duplicate(), "c": c.clear_marks.duplicate()}
+
+
+func _set_plan_state(st: Dictionary) -> void:
+	var c := sim.colony
+	c.zones = (st["z"] as Dictionary).duplicate()
+	c.road_marks = (st["r"] as Dictionary).duplicate()
+	c.wreck_marks = (st["w"] as Dictionary).duplicate()
+	c.clear_marks = (st["c"] as Dictionary).duplicate()
+	sim.refresh_zones(c)
+
+
+func plan_undo() -> void:
+	if plan_undo_stack.is_empty():
+		hud.push_event("Nothing to undo in the town plan.", "info")
+		return
+	var e: Dictionary = plan_undo_stack.pop_back()
+	_set_plan_state(e["before"])
+	for r in e["removed"]:
+		sim.restore_road_tile(int(r[0]), int(r[1]))
+	plan_redo_stack.append(e)
+	hud.push_event("Undid: %s  (Ctrl+Y to redo)" % e["what"], "info")
+
+
+func plan_redo() -> void:
+	if plan_redo_stack.is_empty():
+		hud.push_event("Nothing to redo in the town plan.", "info")
+		return
+	var e: Dictionary = plan_redo_stack.pop_back()
+	_set_plan_state(e["after"])
+	for r in e["removed"]:
+		sim.remove_road_tile(int(r[0]))
+	plan_undo_stack.append(e)
+	hud.push_event("Redid: %s" % e["what"], "info")
+
+
+## Applies a zone, road or road-removal drag from the town planner (undoable).
 func _apply_plan(a: Vector2, b: Vector2) -> void:
+	var before := _plan_state()
+	sim.last_removed_roads = []
+	_apply_plan_inner(a, b)
+	var after := _plan_state()
+	var removed: Array = sim.last_removed_roads.duplicate() if tool_mode == "unroad" else []
+	if after.hash() == before.hash() and removed.is_empty():
+		return
+	var what := "road plan"
+	if tool_mode.begins_with("zone"):
+		what = "erase zone" if tool_mode == "zone0" else "%s zone" % Defs.ZONES[int(tool_mode.substr(4))]["name"]
+	elif tool_mode == "unroad":
+		what = "remove roads"
+	plan_undo_stack.append({"before": before, "after": after, "removed": removed, "what": what})
+	if plan_undo_stack.size() > 60:
+		plan_undo_stack.pop_front()
+	plan_redo_stack.clear()
+
+
+func _apply_plan_inner(a: Vector2, b: Vector2) -> void:
 	var c := sim.colony
 	if tool_mode.begins_with("zone"):
 		var z := int(tool_mode.substr(4))
@@ -477,7 +548,8 @@ func _apply_plan(a: Vector2, b: Vector2) -> void:
 			hud.push_event("Planned %d tiles of road. Laborers and builders will lay it (trees in the way get cleared first)." % n, "info")
 	elif tool_mode == "unroad":
 		var n := sim.remove_roads(c, sim.world.tile_of(a), sim.world.tile_of(b))
-		hud.push_event("Removed %d road tiles." % n, "info")
+		var wr := c.wreck_marks.size()
+		hud.push_event("Removed %d road tiles%s." % [n, (" (enemy roads are marked: your soldiers and laborers will tear them up)" if wr > 0 else "")], "info")
 
 
 ## Rectangle of the clearing box being dragged (world pixels).
@@ -830,7 +902,7 @@ func _lumber_test(i: int) -> void:
 			sim.note_stump(ti, sim.world.res_type[ti])
 			sim.world.res_type[ti] = Defs.R.NONE
 			sim.world.road[ti] = 1
-			sim.road_tiles[ti] = true
+			sim.road_tiles[ti] = 0
 			_nt["road_stump"] = ti
 		# waits
 		print("LT wait before=", Deals.wait_left(sim, 0, 1, "alliance"), " propose=", Deals.player_propose(sim, 1, "alliance"), " second='", Deals.player_propose(sim, 1, "alliance"), "' left=", int(Deals.wait_left(sim, 0, 1, "alliance")))
@@ -847,6 +919,113 @@ func _lumber_test(i: int) -> void:
 				lb = q
 		print("LT t%d lumberer=%s carry=%s sticks=+%d stumps=%d logs=%d road_stump_back=%s" % [i, lb.state if lb != null else "-", lb.carrying if lb != null else {}, int(c.count("sticks") - float(_nt["sticks0"])),
 			sim.stumps.size(), int(c.count("log")), str(sim.world.res_type[int(_nt.get("road_stump", 0))] != Defs.R.NONE)])
+
+
+## Round E: AI roads, road wrecking, war structures, chronic conditions, sleeping indoors,
+## planner undo/redo, world history: `-- --autotest --etest`
+var _et := {}
+func _e_test(i: int) -> void:
+	var c := sim.colony
+	if i == 2:
+		var o: Colony = null
+		var bd := 1e9
+		for oc in sim.colonies:
+			if oc.civ_id != 0 and not oc.bandit and Vector2(oc.home).distance_to(Vector2(c.home)) < bd:
+				bd = Vector2(oc.home).distance_to(Vector2(c.home))
+				o = oc
+		_et["o"] = o.civ_id
+		for k in ["wood", "stone", "hides", "copper_ore", "iron_ore"]:
+			c.add(k, 300)
+		for t in ["lookout_perches", "war_drums", "catapults", "bastions"]:
+			c.researched[t] = true
+		c.invalidate_bonus()
+		for t in ["lookout_perch", "catapult", "war_drum_circle"]:
+			var site := CivAI.find_site(sim, c, t)
+			var b := sim.place_building(c, t, site)
+			if b != null:
+				sim.finish_building(b)
+				_et[t] = b.id
+			print("ET placed ", t, " at ", site, " ok=", b != null)
+		print("ET soldier bonus=", c.bonus("soldier"), " siege=", c.bonus("siege"))
+		# an enemy storehouse within catapult range, and an enemy road near our camp
+		sim.contacts[sim._key(0, o.civ_id)] = true
+		sim.declare_war(0, o.civ_id, true)
+		var cat := sim.building(int(_et.get("catapult", -1)))
+		if cat != null:
+			for r in range(4, 13):
+				var t2 := cat.tile + Vector2i(r, 2)
+				print("ET enemy site ", t2, " '", sim.can_place(null, "storage", t2), "'")
+				if sim.can_place(null, "storage", t2) == "":
+					var eb := sim.place_building(o, "storage", t2)
+					if eb != null:
+						sim.finish_building(eb)
+						_et["enemy_b"] = eb.id
+						print("ET enemy storage hp ", eb.cur_hp())
+						break
+		var rt := road_tiles_between(sim.world.center_of(c.home + Vector2i(-8, 8)), sim.world.center_of(c.home + Vector2i(4, 8)))
+		var laid := 0
+		for q in rt:
+			if sim.road_ok(q):
+				sim.lay_road(o, sim.world.idx(q))
+				laid += 1
+		var n := sim.remove_roads(c, c.home + Vector2i(-8, 7), c.home + Vector2i(4, 9))
+		print("ET enemy road laid=", laid, " marked=", n, " wreck_marks=", c.wreck_marks.size())
+		# chronic conditions
+		var ppl := c.living()
+		ppl[0].conditions["dementia"] = 45.0
+		ppl[0].age_days = 72.0 * Defs.AGE_YEAR_DAYS
+		if ppl.size() > 1:
+			ppl[1].conditions["dementia"] = 45.0
+			ppl[1].age_days = 58.0 * Defs.AGE_YEAR_DAYS
+			ppl[1].conditions["diabetes"] = 50.0
+			ppl[1].conditions["obesity"] = 50.0
+		_et["dem"] = ppl[1].id if ppl.size() > 1 else ppl[0].id
+		print("ET dementia lvl=", ppl[0].dementia_level(), " harmful=", ppl[0].dementia_harmful(), " can_work=", ppl[0].can_work(), " label=", Conditions.label(ppl[0]))
+		# undo / redo of a zone
+		tool_mode = "zone2"
+		var z0 := c.zones.size()
+		_apply_plan(sim.world.center_of(c.home + Vector2i(10, 10)), sim.world.center_of(c.home + Vector2i(13, 13)))
+		var z1 := c.zones.size()
+		plan_undo()
+		var z2 := c.zones.size()
+		plan_redo()
+		print("ET undo zones ", z0, " -> ", z1, " undo ", z2, " redo ", c.zones.size())
+		tool_mode = ""
+		_et["confused"] = 0
+	if i == 12:
+		save_slot(5)
+		var s2 := Sim.new()
+		s2.from_dict(SaveSystem.load_data(5))
+		var conds := 0
+		for q in s2.colony.people:
+			conds += q.conditions.size()
+		var owners := {}
+		for k in s2.road_tiles.keys():
+			owners[s2.road_tiles[k]] = true
+		print("ET reload roads=", s2.road_tiles.size(), "/", sim.road_tiles.size(), " owners=", owners.keys(), " hist=", s2.history.size(), "/", sim.history.size(),
+			" conds=", conds, " auto=", [s2.colony.auto_convert, s2.colony.auto_research, s2.colony.auto_expand, s2.colony.auto_roads, s2.colony.auto_advance], " wreck=", s2.colony.wreck_marks.size())
+	if i > 2:
+		var dp := sim.person(int(_et.get("dem", -1)))
+		if dp != null and dp.state.begins_with("Forgot"):
+			_et["confused"] = int(_et["confused"]) + 1
+	if i >= 3 and i % 3 == 0:
+		var by := {}
+		for k in sim.road_tiles.keys():
+			by[sim.road_tiles[k]] = int(by.get(sim.road_tiles[k], 0)) + 1
+		var marks := {}
+		for oc in sim.colonies:
+			if not oc.road_marks.is_empty():
+				marks[oc.civ_id] = oc.road_marks.size()
+		var eb := sim.building(int(_et.get("enemy_b", -1)))
+		var indoors := 0
+		var asleep := 0
+		for q in c.living():
+			if q.sleeping:
+				asleep += 1
+				if sim.indoors(q) != null:
+					indoors += 1
+		print("ET t%d roads by civ=%s plans=%s wreck=%d enemy_b_hp=%s shots=%s confused_ticks=%d asleep=%d indoors=%d hist=%d" % [i, by, marks, c.wreck_marks.size(),
+			str(eb.cur_hp()) if eb != null else "gone", sim.tower_shots.map(func(t): return t[3] if t.size() > 3 else "arrow"), int(_et["confused"]), asleep, indoors, sim.history.size()])
 
 
 ## Trade orders, bandits, splits, bridges, road blocking, calendar speed, fog: `-- --autotest --newtest`
@@ -1259,6 +1438,8 @@ func _autotest() -> void:
 			_new_test(i)
 		if _args.has("--lumbertest"):
 			_lumber_test(i)
+		if _args.has("--etest"):
+			_e_test(i)
 		if _args.has("--raidtest") and i == 2:
 			_raid_setup()
 		if _args.has("--raidtest") and i > 2:
@@ -1687,7 +1868,81 @@ func _military_shots(dir: String) -> void:
 	hud.toggle_pause_menu()
 	hud._fill_pause_menu("", "save")
 	await _snap(dir + "/33_saves.png", 2.0)
+	hud._fill_pause_menu("", "history")
+	await _snap(dir + "/35_history.png", 2.0)
+	hud._fill_pause_menu("", "confirm_menu")
+	await _snap(dir + "/36_confirm.png", 2.0)
 	hud.toggle_pause_menu()
+	# --- war structures of every age
+	var wpos := c.home + Vector2i(-14, -14)
+	for r in range(0, 40):
+		var ok := true
+		for yy in range(-1, 6):
+			for xx in range(-1, 34):
+				var q := c.home + Vector2i(-16 + xx, 14 + r + yy)
+				if not sim.world.walkable(q) or sim.building_tiles.has(sim.world.idx(q)) or sim.world.road[sim.world.idx(q)] != 0:
+					ok = false
+		if ok:
+			wpos = c.home + Vector2i(-16, 14 + r)
+			break
+	for yy in range(-1, 6):
+		for xx in range(-1, 34):
+			var qi := sim.world.idx(wpos + Vector2i(xx, yy))
+			if sim.world.res_type[qi] != Defs.R.NONE:
+				sim.world.res_type[qi] = Defs.R.NONE
+				_on_tile_changed(wpos + Vector2i(xx, yy))
+	var wx := 0
+	for t in ["lookout_perch", "war_drum_circle", "sling_platform", "ram_shed", "bastion", "catapult", "ballista_tower", "trebuchet"]:
+		c.researched[str(Defs.BUILDINGS[t]["tech"])] = true
+		var placed: Building = null
+		for dy in range(0, 2):
+			for dx in range(0, 3):
+				if placed != null:
+					break
+				var cand := wpos + Vector2i(wx + dx, dy)
+				if sim.can_place(c, t, cand) == "":
+					placed = sim.place_building(c, t, cand)
+			if placed != null:
+				break
+		if placed != null:
+			sim.finish_building(placed)
+			wx += placed.size().x + 1
+	c.invalidate_bonus()
+	camera.position = sim.world.center_of(wpos + Vector2i(wx / 2, 2))
+	await _snap(dir + "/34_war_structures.png", 2.2)
+	# --- research tree header
+	hud.toggle_research()
+	await _snap(dir + "/37_research.png", 1.0)
+	hud.close_panel()
+	# --- zones visible in build mode, and the planner with undo
+	sim.paint_zone(c, c.home + Vector2i(6, -4), c.home + Vector2i(12, 2), 1)
+	sim.paint_zone(c, c.home + Vector2i(-12, 4), c.home + Vector2i(-5, 9), 2)
+	sim.paint_zone(c, c.home + Vector2i(2, 6), c.home + Vector2i(8, 11), 3)
+	camera.position = sim.world.center_of(c.home)
+	start_build("storage")
+	await _snap(dir + "/38_build_zones.png", 1.2)
+	cancel_build()
+	hud.toggle_planner()
+	await _snap(dir + "/39_planner.png", 1.2)
+	hud.toggle_planner()
+	# --- roads on the world map, in each tribe's colour
+	for oc in sim.colonies:
+		if oc.collapsed or oc.bandit:
+			continue
+		for q in road_tiles_between(sim.world.center_of(oc.home + Vector2i(-10, 3)), sim.world.center_of(oc.home + Vector2i(12, -8))):
+			if sim.road_ok(q):
+				sim.lay_road(oc, sim.world.idx(q))
+	hud.toggle_worldmap()
+	hud.worldmap._road_tex = null
+	await _snap(dir + "/40_worldmap_roads.png", 1.0)
+	hud.worldmap.territory_mode = true
+	hud.worldmap._tex_version = -1
+	hud.worldmap.set_zoom(3.0)
+	hud.worldmap.map_center = Vector2(c.home) / Vector2(sim.world.w, sim.world.h)
+	await _snap(dir + "/41_territory_roads.png", 1.0)
+	hud.worldmap.set_zoom(1.0)
+	hud.worldmap.territory_mode = false
+	hud.toggle_worldmap()
 	var lake := Vector2i(-1, -1)
 	for r in range(3, 60):
 		for dx in range(-r, r + 1):

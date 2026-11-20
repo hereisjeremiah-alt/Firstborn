@@ -1,5 +1,5 @@
 extends Node
-## Music and UI sounds. Ten soundtrack pieces play in a shuffled order and crossfade smoothly
+## Music and UI sounds. Twenty soundtrack pieces play in a shuffled order and crossfade smoothly
 ## into each other. Every button in the game gets a clean click automatically.
 
 const MUSIC_BUS := "Music"
@@ -16,6 +16,16 @@ const TRACKS := [
 	["res://audio/music/08_iron_rain.ogg", "Iron Rain"],
 	["res://audio/music/09_harvest_song.ogg", "Harvest Song"],
 	["res://audio/music/10_distant_shores.ogg", "Distant Shores"],
+	["res://audio/music/11_march_of_the_tribe.ogg", "March of the Tribe"],
+	["res://audio/music/12_bronze_legion.ogg", "Bronze Legion"],
+	["res://audio/music/13_banners_at_dawn.ogg", "Banners at Dawn"],
+	["res://audio/music/14_hearth_lullaby.ogg", "Hearth Lullaby"],
+	["res://audio/music/15_mammoth_trail.ogg", "Mammoth Trail"],
+	["res://audio/music/16_spring_thaw.ogg", "Spring Thaw"],
+	["res://audio/music/17_smoke_and_stars.ogg", "Smoke and Stars"],
+	["res://audio/music/18_war_horns.ogg", "War Horns"],
+	["res://audio/music/19_the_long_road.ogg", "The Long Road"],
+	["res://audio/music/20_riverstone.ogg", "Riverstone"],
 ]
 
 var _players: Array = []      # two AudioStreamPlayers for crossfading
@@ -43,10 +53,11 @@ func _ready() -> void:
 		s.bus = SFX_BUS
 		add_child(s)
 		_sfx_players.append(s)
-	for k in ["click", "toggle", "hover", "confirm", "fanfare"]:
+	for k in ["click", "toggle", "hover", "confirm", "fanfare", "research"]:
 		var path := "res://audio/sfx/%s.wav" % k
 		if ResourceLoader.exists(path):
 			_sfx[k] = load(path)
+	randomize()
 	get_tree().node_added.connect(_on_node_added)
 	if DisplayServer.get_name() != "headless":
 		_next_track()

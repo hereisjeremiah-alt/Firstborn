@@ -172,7 +172,8 @@ const BUILD_CATEGORIES := [
 	["Food & Water", ["campfire", "drying_rack", "hunting_camp", "farm", "granary", "well"]],
 	["Storage & Industry", ["storage", "lumber_yard", "mine", "workshop", "blacksmith", "harbor"]],
 	["Knowledge & Civic", ["research_table", "healer_hut", "monolith", "map_table", "capitol"]],
-	["Defense & Military", ["fence", "wall", "gate", "training_camp", "mercenary_hall", "watchtower", "arrow_tower"]],
+	["Defense & Military", ["fence", "wall", "gate", "lookout_perch", "sling_platform", "watchtower", "bastion", "arrow_tower", "ballista_tower",
+		"training_camp", "mercenary_hall", "war_drum_circle", "ram_shed", "catapult", "trebuchet"]],
 ]
 
 
@@ -205,7 +206,7 @@ const BASE_PRICE := {"wood": 1.0, "sticks": 0.5, "log": 3.0, "stone": 1.0, "gras
 const BUILD_ORDER := ["campfire", "shelter", "storage", "research_table", "bedding", "drying_rack", "hunting_camp", "fence",
 	"farm", "granary", "stone_hut", "well", "healer_hut", "mine",
 	"harbor", "blacksmith", "training_camp", "wall", "gate", "monolith", "workshop", "house", "map_table", "capitol", "watchtower",
-	"stone_house", "arrow_tower"]
+	"stone_house", "arrow_tower", "lookout_perch", "war_drum_circle", "sling_platform", "ram_shed", "bastion", "catapult", "ballista_tower", "trebuchet"]
 # tech: research needed to unlock. warm: sleeping/standing inside keeps people warm. storage / water_cap / preserve:
 # stockpile bonuses. blocks: stops animals. guard: wild animals keep away (tiles).
 const BUILDINGS := {
@@ -267,6 +268,24 @@ const BUILDINGS := {
 		"desc": "Houses 8. Mortared stone and a tiled roof."},
 	"harbor": {"name": "Harbor", "size": Vector2i(2, 2), "cost": {"wood": 30, "stone": 10}, "work": 45.0, "housing": 0, "tech": "boatbuilding",
 		"desc": "Must touch the sea. Builds ships to carry your people to other shores."},
+	"lookout_perch": {"name": "Rock Lookout", "size": Vector2i(1, 1), "cost": {"wood": 6, "stone": 8}, "work": 12.0, "housing": 0, "guard": 6.0, "tech": "lookout_perches",
+		"hp": 120, "shoots": {"range": 6.0, "dmg": 5.0, "cd": 2.5, "ammo": "rock"}, "desc": "Defense. A watcher on a log perch throws rocks at enemies at war and predators within 6 tiles."},
+	"war_drum_circle": {"name": "War Drum Circle", "size": Vector2i(2, 2), "cost": {"wood": 10, "hides": 3}, "work": 15.0, "housing": 0, "tech": "war_drums",
+		"soldier": 0.1, "desc": "Offense. Drums before battle: soldiers fight 10% harder (one is enough)."},
+	"sling_platform": {"name": "Sling Platform", "size": Vector2i(1, 1), "cost": {"wood": 12, "stone": 15}, "work": 22.0, "housing": 0, "guard": 8.0, "tech": "sling_platforms",
+		"hp": 220, "shoots": {"range": 8.0, "dmg": 7.0, "cd": 1.8, "ammo": "rock"}, "desc": "Defense. Slingers on a raised stone platform shoot enemies and predators within 8 tiles."},
+	"ram_shed": {"name": "Ram Shed", "size": Vector2i(3, 2), "cost": {"wood": 30, "hides": 4}, "work": 30.0, "housing": 0, "tech": "battering_rams",
+		"siege": 0.5, "desc": "Offense. Battering rams for your raids: soldiers break enemy walls, gates and buildings 50% faster."},
+	"bastion": {"name": "Bronze Bastion", "size": Vector2i(2, 2), "cost": {"stone": 40, "wood": 10, "copper_ore": 4}, "work": 50.0, "housing": 0, "guard": 10.0, "tech": "bastions",
+		"hp": 700, "defense": 0.05, "shoots": {"range": 9.0, "dmg": 11.0, "cd": 1.6}, "desc": "Defense. A bronze-shod strong point: shoots enemies within 9 tiles; your people take 5% less damage."},
+	"catapult": {"name": "Catapult", "size": Vector2i(2, 2), "cost": {"wood": 35, "stone": 10, "copper_ore": 3}, "work": 40.0, "housing": 0, "tech": "catapults",
+		"hp": 250, "siege": 0.25, "shoots": {"range": 14.0, "dmg": 40.0, "cd": 6.0, "siege": true, "ammo": "boulder"},
+		"desc": "Offense. Build it near the border: hurls boulders at enemy buildings and warriors up to 14 tiles away during a war."},
+	"ballista_tower": {"name": "Ballista Tower", "size": Vector2i(2, 2), "cost": {"stone": 40, "wood": 20, "iron_ore": 4}, "work": 55.0, "housing": 0, "guard": 12.0, "tech": "ballistae",
+		"hp": 800, "shoots": {"range": 13.0, "dmg": 28.0, "cd": 3.0}, "desc": "Defense. A stone tower with a great crossbow: bolts hit enemies within 13 tiles."},
+	"trebuchet": {"name": "Trebuchet", "size": Vector2i(3, 3), "cost": {"wood": 50, "stone": 20, "iron_ore": 4}, "work": 60.0, "housing": 0, "tech": "trebuchets",
+		"hp": 300, "siege": 0.4, "shoots": {"range": 20.0, "dmg": 80.0, "cd": 8.0, "siege": true, "ammo": "boulder"},
+		"desc": "Offense. A giant counterweight sling: smashes enemy buildings up to 20 tiles away during a war."},
 	"watchtower": {"name": "Watchtower", "size": Vector2i(2, 2), "cost": {"wood": 20, "stone": 20}, "work": 45.0, "housing": 0, "guard": 12.0, "tech": "watch_posts",
 		"hp": 300, "shoots": {"range": 8.0, "dmg": 8.0, "cd": 2.0}, "desc": "Lookouts keep predators away (12 tiles) and throw spears at enemies at war (8 tiles)."},
 }
@@ -370,8 +389,10 @@ const TECH_ORDER := [
 	"smokehouses", "masonry", "engineering", "aqueducts", "medicine", "sanitation",
 	"apothecary", "iron_weapons", "iron_armor", "iron_arrowheads", "iron_smelting", "bellows",
 	"iron_tool_kits", "galleys", "sea_charts", "reinforced_hulls",
-	"weaponsmithing", "warrior_training", "defensive_perimeters", "mercenary_pacts", "stone_walls", "watch_posts", "phalanx",
-	"fortifications", "arrow_towers", "legions", "standing_stones", "cartography", "statecraft", "code_of_laws", "coinage", "bureaucracy", "philosophy",
+	"lookout_perches", "war_drums",
+	"weaponsmithing", "warrior_training", "defensive_perimeters", "mercenary_pacts", "sling_platforms", "battering_rams",
+	"stone_walls", "watch_posts", "phalanx", "bastions", "catapults",
+	"fortifications", "arrow_towers", "legions", "ballistae", "trebuchets", "standing_stones", "cartography", "statecraft", "code_of_laws", "coinage", "bureaucracy", "philosophy",
 ]
 const TECHS := {
 	"foraging_lore": {"name": "Foraging Lore", "era": 0, "kind": "Food", "cost": {"points": 25}, "fx": {"work_gatherer": 0.2}, "desc": "Knowing which plants feed you: gathering 20% faster."},
@@ -445,6 +466,14 @@ const TECHS := {
 	"iron_tool_kits": {"name": "Iron Tool Kits", "era": 3, "kind": "Tools", "cost": {"points": 500, "iron_ore": 6}, "fx": {"work_farmer": 0.3, "work_woodcutter": 0.2}, "desc": "Sickles, saws and hammers of iron."},
 	"galleys": {"name": "Galleys", "era": 3, "kind": "Ships", "cost": {"points": 520, "iron_ore": 4}, "fx": {"ship_kind": 1.0}, "desc": "Harbors can build Galleys (10 passengers, fastest)."},
 	"sea_charts": {"name": "Sea Charts", "era": 3, "kind": "Ships", "cost": {"points": 460}, "fx": {"ship_speed": 0.3}, "desc": "Ships move 30% faster."},
+	"lookout_perches": {"name": "Lookout Perches", "era": 0, "kind": "Military", "cost": {"points": 40, "stone": 6}, "fx": {}, "unlocks": ["lookout_perch"], "desc": "Unlocks the Rock Lookout: a perch from which a watcher hurls rocks at enemies and predators."},
+	"war_drums": {"name": "War Drums", "era": 0, "kind": "Military", "cost": {"points": 45, "hides": 2}, "fx": {}, "unlocks": ["war_drum_circle"], "desc": "Unlocks the War Drum Circle: drumming before a fight makes your fighters 10% stronger."},
+	"sling_platforms": {"name": "Sling Platforms", "era": 1, "kind": "Military", "cost": {"points": 0, "stone": 15}, "fx": {}, "unlocks": ["sling_platform"], "desc": "Unlocks the Sling Platform: slingers shoot enemies and predators within 8 tiles."},
+	"battering_rams": {"name": "Battering Rams", "era": 1, "kind": "Military", "cost": {"points": 0, "wood": 25}, "fx": {}, "unlocks": ["ram_shed"], "desc": "Unlocks the Ram Shed: your soldiers break walls, gates and buildings 50% faster."},
+	"bastions": {"name": "Bastions", "era": 2, "kind": "Military", "cost": {"points": 0, "stone": 30, "copper_ore": 3}, "fx": {}, "unlocks": ["bastion"], "desc": "Unlocks the Bronze Bastion: a strong point that shoots enemies within 9 tiles and hardens your people."},
+	"catapults": {"name": "Catapults", "era": 2, "kind": "Military", "cost": {"points": 0, "wood": 30, "copper_ore": 3}, "fx": {}, "unlocks": ["catapult"], "desc": "Unlocks the Catapult: hurls boulders at enemy buildings and warriors up to 14 tiles away."},
+	"ballistae": {"name": "Ballistae", "era": 3, "kind": "Military", "cost": {"points": 0, "iron_ore": 5}, "fx": {}, "unlocks": ["ballista_tower"], "desc": "Unlocks the Ballista Tower: giant iron-tipped bolts at enemies within 13 tiles."},
+	"trebuchets": {"name": "Trebuchets", "era": 3, "kind": "Military", "cost": {"points": 0, "wood": 40, "iron_ore": 5}, "fx": {}, "unlocks": ["trebuchet"], "desc": "Unlocks the Trebuchet: smashes enemy buildings up to 20 tiles away."},
 	"weaponsmithing": {"name": "Weaponsmithing", "era": 1, "kind": "Military", "cost": {"points": 0, "stone": 10}, "fx": {}, "unlocks": ["blacksmith"], "desc": "Unlocks the Blacksmith, which forges weapons for soldiers."},
 	"warrior_training": {"name": "Warrior Training", "era": 1, "kind": "Military", "cost": {"points": 0}, "fx": {"fight": 2.0}, "unlocks": ["training_camp"], "desc": "Unlocks the Training Camp. Only there can people become Soldiers."},
 	"defensive_perimeters": {"name": "Defensive Perimeters", "era": 1, "kind": "Military", "cost": {"points": 0, "wood": 20}, "fx": {}, "unlocks": ["wall", "gate"], "desc": "Walls and gates. Your people start building a wooden palisade around the village."},

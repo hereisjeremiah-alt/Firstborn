@@ -203,15 +203,16 @@ func _panel_milestones() -> void:
 ## A palette at the bottom of the screen for painting zones and laying out roads.
 var planner: PanelContainer
 var planner_hint: Label
+var planner_roads: CheckBox
 
 
 func _build_planner() -> void:
 	planner = PanelContainer.new()
 	planner.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	planner.offset_bottom = -12
-	planner.offset_top = -112
-	planner.offset_left = -360
-	planner.offset_right = 360
+	planner.offset_top = -140
+	planner.offset_left = -420
+	planner.offset_right = 420
 	planner.visible = false
 	root.add_child(planner)
 	var v := VBoxContainer.new()
@@ -235,6 +236,20 @@ func _build_planner() -> void:
 	h.add_child(_button("Erase zone", game.set_tool.bind("zone0"), 90))
 	h.add_child(_button("Road / Bridge", game.set_tool.bind("road"), 110))
 	h.add_child(_button("Remove road", game.set_tool.bind("unroad"), 100))
+	h.add_child(VSeparator.new())
+	var ub := _button("Undo", func(): game.plan_undo(), 56)
+	ub.tooltip_text = "Undo the last zone or road change (Ctrl+Z)."
+	h.add_child(ub)
+	var rb := _button("Redo", func(): game.plan_redo(), 56)
+	rb.tooltip_text = "Redo (Ctrl+Y)."
+	h.add_child(rb)
+	planner_roads = CheckBox.new()
+	planner_roads.text = "Tribe lays its own roads"
+	planner_roads.tooltip_text = "Your laborers plan roads from buildings to the nearest road or the campfire on their own."
+	planner_roads.focus_mode = Control.FOCUS_NONE
+	planner_roads.button_pressed = true
+	planner_roads.toggled.connect(func(on): game.sim.colony.auto_roads = on)
+	v.add_child(planner_roads)
 	planner_hint = _label("", 12, Color(0.8, 0.78, 0.7))
 	planner_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	planner_hint.custom_minimum_size.x = 640
@@ -243,6 +258,7 @@ func _build_planner() -> void:
 
 func toggle_planner() -> void:
 	planner.visible = not planner.visible
+	planner_roads.set_pressed_no_signal(game.sim.colony.auto_roads)
 	if not planner.visible:
 		if game.tool_mode.begins_with("zone") or game.tool_mode.ends_with("road"):
 			game.set_tool("")
@@ -261,7 +277,7 @@ func _planner_hint() -> String:
 	if m == "road":
 		return "Drag from one point to another to lay out a road (it bends once). Across a lake or river it becomes a bridge (%d wood per tile, built from the shore out). Laborers and builders build it; Billies walk about twice as fast on roads." % Defs.BRIDGE_WOOD
 	if m == "unroad":
-		return "Drag a box to remove roads and road plans."
+		return "Drag a box to remove roads and road plans. Roads of a tribe you're at war with get marked, and your soldiers and laborers go tear them up. Ctrl+Z undoes, Ctrl+Y redoes."
 	return "Pick a zone or the road tool. Zones: buildings standing in the zone that suits them get bonuses. Roads make Billies faster."
 
 
@@ -771,6 +787,7 @@ var rt_share_label: Label
 var rt_advance: Button
 var rt_auto_conv: CheckBox
 var rt_auto_res: CheckBox
+var rt_auto_adv: CheckBox
 var build_layer: Control
 var build_tabs: TabContainer
 var _build_sig := ""
@@ -830,6 +847,11 @@ func _build_research_tree() -> void:
 	h.add_child(VSeparator.new())
 	rt_advance = _button("Advance Era", _on_advance_era)
 	h.add_child(rt_advance)
+	h.add_child(_button("Close  [R]", close_panel, 90))
+	# second row: the automatic options
+	h = HBoxContainer.new()
+	h.add_theme_constant_override("separation", 14)
+	v.add_child(h)
 	rt_auto_conv = CheckBox.new()
 	rt_auto_conv.text = "Auto-convert"
 	rt_auto_conv.tooltip_text = "Researchers turn every 1,000 KP into a research point on their own."
@@ -842,7 +864,12 @@ func _build_research_tree() -> void:
 	rt_auto_res.focus_mode = Control.FOCUS_NONE
 	rt_auto_res.toggled.connect(func(on): game.sim.colony.auto_research = on)
 	h.add_child(rt_auto_res)
-	h.add_child(_button("Close  [R]", close_panel, 90))
+	rt_auto_adv = CheckBox.new()
+	rt_auto_adv.text = "Auto-advance age"
+	rt_auto_adv.tooltip_text = "Move on to the next age on its own as soon as every tech of this age is researched and the RP are saved up."
+	rt_auto_adv.focus_mode = Control.FOCUS_NONE
+	rt_auto_adv.toggled.connect(func(on): game.sim.colony.auto_advance = on)
+	h.add_child(rt_auto_adv)
 	rt_info = RichTextLabel.new()
 	rt_info.bbcode_enabled = true
 	rt_info.fit_content = true
@@ -921,6 +948,8 @@ func _refresh_research() -> void:
 	rt_title.text = "Research Tree — %s" % c.era
 	rt_kp.text = "[b]Knowledge:[/b] [color=#ffd27a]%s KP[/color]     [b]Research points:[/b] [color=#9fd8ff]%d RP[/color]" % [_fmt_int(c.knowledge), int(c.research_points)]
 	var can_conv := c.knowledge >= Defs.kp_per_rp()
+	rt_convert1.text = "Convert %s KP → 1 RP" % _fmt_int(Defs.kp_per_rp())
+	rt_auto_conv.tooltip_text = "Researchers turn every %s KP into a research point on their own." % _fmt_int(Defs.kp_per_rp())
 	rt_convert1.disabled = not can_conv
 	rt_convert_all.disabled = not can_conv
 	if absf(rt_share.value - c.research_share * 100.0) > 0.5:
@@ -928,6 +957,7 @@ func _refresh_research() -> void:
 	rt_share_label.text = "To research: %d%%" % roundi(c.research_share * 100.0)
 	rt_auto_conv.set_pressed_no_signal(c.auto_convert)
 	rt_auto_res.set_pressed_no_signal(c.auto_research)
+	rt_auto_adv.set_pressed_no_signal(c.auto_advance)
 	if c.era_i < Defs.ERAS.size() - 1:
 		rt_advance.visible = true
 		rt_advance.disabled = not c.can_advance_era()
@@ -1122,6 +1152,7 @@ func _on_share_changed(v: float) -> void:
 
 func _on_research(id: String) -> void:
 	if game.sim.colony.research(id):
+		Sound.play_jingle("research")
 		game.sim.emit_signal("buildings_changed")
 	_tree_sig = ""
 	_refresh_research()
@@ -1129,7 +1160,8 @@ func _on_research(id: String) -> void:
 
 func _on_advance_era() -> void:
 	if game.sim.colony.advance_era():
-		push_event("Your tribe has entered the %s! New research and buildings are available." % game.sim.colony.era, "major_good")
+		Sound.play_jingle("fanfare")
+		game.sim.emit_signal("event", "Your tribe has entered the %s! New research and buildings are available." % game.sim.colony.era, "major_good")
 		game.sim.emit_signal("buildings_changed")
 		_tree_sig = ""
 		_refresh_research()
@@ -1334,6 +1366,8 @@ func _panel_colony() -> void:
 		var flags := ""
 		if p.is_sick():
 			flags += " [color=#ff8a7a](%s)[/color]" % Defs.ILLNESS[p.illness["type"]]["name"]
+		if not p.conditions.is_empty():
+			flags += " [color=#e0b070](%s)[/color]" % Conditions.label(p)
 		if p.pregnant_days >= 0.0:
 			flags += " [color=#9fe08a](expecting)[/color]"
 		if p.id == c.leader_id:
@@ -1423,7 +1457,7 @@ Rival tribes live elsewhere in the world and are controlled by their own AI. Exp
 
 [b]Research & eras[/b]
 Build a Research Table. A share of every material brought into the stockpile (slider in the Research Tree, R) is set aside for research, and Researchers carry it from the stockpile to the table — never straight from the wild. Each unit gives knowledge points (KP); rarer materials give more (grass 20, sticks 30, wood/stone 60, bones/hides 150, copper 400, tin 450, iron 600).
-Convert 1,000 KP into 1 research point (RP) and spend RP in the tree. Each tech needs the one before it in its row, costs rise along each row and jump with every era. Finish every tech of an era to advance: Caveman → Stone → Bronze → Iron Age.
+Convert KP into research points (RP; 1,000 KP each by default, set in Game Rules) and spend RP in the tree. Each tech needs the one before it in its row, costs rise along each row and jump with every era. Finish every tech of an era to advance: Caveman → Stone → Bronze → Iron Age.
 
 [b]Time & ages[/b]
 The calendar runs 5x faster than daily life. To reach the next age, research everything in your age, then pay double the RP of all that age's techs. A Monolith (Standing Stones) skips years for 1,000 KP each.
@@ -1436,6 +1470,15 @@ Paint Farming, Housing and Workshop zones and lay out roads (across lakes and ri
 
 [b]Lumber Yard[/b]
 Research Lumber Yard (Caveman Age) and build one near a forest. Lumberers fell whole trees, carry each log to the yard and chop it into 14 sticks. Felled trees grow back in time, but never under a building or road.
+
+[b]War structures[/b]
+Every age has a defensive post (Rock Lookout → Sling Platform → Bronze Bastion → Ballista Tower) that shoots enemies and predators, and offensive works (War Drum Circle, Ram Shed, Catapult, Trebuchet) that make your soldiers stronger or smash enemy buildings from afar. Research them in the Military row.
+
+[b]Roads in war[/b]
+Every tribe lays its own roads. At war, use Plan Town → Remove road on an enemy's road: your soldiers and laborers go and tear it up (enemies do the same to yours). Ctrl+Z / Ctrl+Y undo and redo town-plan changes.
+
+[b]Long illnesses[/b]
+Dementia (45+) makes people forget what they were doing and gets worse with age; from 70 they can't work and cause trouble. Obesity comes from easy living with little hard work and makes type 2 diabetes 25% more likely. Diabetes slowly wears down health; healers keep it in check.
 
 [b]Diplomacy[/b]
 After asking a tribe for an alliance, passage, peace or a deal, wait 5 minutes before asking them for the same thing again. The button shows the time left.
@@ -1683,6 +1726,12 @@ func _refresh_info() -> void:
 		if p.is_sick():
 			s += "[color=#ff8a7a]Ill: %s (%.1f days left)\n%s chance of death within %s[/color]\n" % [Defs.ILLNESS[p.illness["type"]]["name"], float(p.illness["days"]),
 				Survival.pct_text(Survival.death_risk(sim, p)), Defs.illness_window(p.illness["type"])]
+		for ck in p.conditions.keys():
+			var ci: Dictionary = Conditions.INFO.get(ck, {"name": ck, "desc": ""})
+			var extra := ""
+			if ck == "dementia":
+				extra = " — severe: can no longer work" if p.dementia_harmful() else " — %d%% (severe at 70)" % roundi(p.dementia_level() * 100.0)
+			s += "[color=#e0b070]%s%s[/color]\n[color=#a09a88]%s[/color]\n" % [ci["name"], extra, ci["desc"]]
 		if p.pregnant_days >= 0.0:
 			s += "[color=#9fe08a]Expecting a child (%d/%d days)[/color]\n" % [int(p.pregnant_days), int(Config.rule("pregnancy_days"))]
 		var fam := PackedStringArray()
@@ -2026,6 +2075,17 @@ func _fill_pause_menu(message: String, page := "main") -> void:
 		pause_box.add_child(HSeparator.new())
 		pause_box.add_child(_button("Back", _fill_pause_menu.bind("", "main")))
 		return
+	if page == "confirm_menu":
+		pause_box.add_child(_label("Return to the main menu?", 22, Color(1.0, 0.85, 0.5)))
+		pause_box.add_child(_label("Are you sure? Anything you haven't saved will be lost.", 14, Color(1.0, 0.7, 0.55)))
+		pause_box.add_child(HSeparator.new())
+		pause_box.add_child(_button("Save first…", _fill_pause_menu.bind("", "save")))
+		pause_box.add_child(_button("Yes, go to the main menu", Callable(game, "go_main_menu")))
+		pause_box.add_child(_button("No, go back", _fill_pause_menu.bind("", "main")))
+		return
+	if page == "history":
+		_fill_history_page()
+		return
 	pause_box.add_child(_label("Game Menu", 22, Color(1.0, 0.85, 0.5)))
 	if message != "":
 		pause_box.add_child(_label(message, 14, Color(0.6, 0.95, 0.55)))
@@ -2034,9 +2094,51 @@ func _fill_pause_menu(message: String, page := "main") -> void:
 	pause_box.add_child(_button("Save Game…", _fill_pause_menu.bind("", "save")))
 	pause_box.add_child(_button("Load Game…", _fill_pause_menu.bind("", "load")))
 	pause_box.add_child(HSeparator.new())
+	pause_box.add_child(_button("World History", _fill_pause_menu.bind("", "history")))
 	pause_box.add_child(_button("Settings", _open_settings))
-	pause_box.add_child(_button("Main Menu", Callable(game, "go_main_menu")))
+	pause_box.add_child(_button("Main Menu", _fill_pause_menu.bind("", "confirm_menu")))
 	pause_box.add_child(_button("Quit Game", func(): game.get_tree().quit()))
+
+
+## The world history: every great event so far, newest first.
+func _fill_history_page() -> void:
+	var sim: Sim = game.sim
+	pause_box.add_child(_label("World History", 22, Color(1.0, 0.85, 0.5)))
+	pause_box.add_child(_label("Wars, peace, new ages, leaders, discoveries and fallen tribes — newest first.", 13, Color(0.75, 0.72, 0.65)))
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(640, 440)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	pause_box.add_child(sc)
+	var rt := RichTextLabel.new()
+	rt.bbcode_enabled = true
+	rt.fit_content = true
+	rt.scroll_active = false
+	rt.custom_minimum_size.x = 620
+	rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(rt)
+	var lines := PackedStringArray()
+	var last_year := ""
+	for k in range(sim.history.size() - 1, -1, -1):
+		var e: Array = sim.history[k]
+		var date := str(e[0])
+		var yr := date.substr(date.find("Year"))
+		if yr != last_year:
+			last_year = yr
+			lines.append("\n[b][color=#ffd27a]%s[/color][/b]" % yr)
+		var kind := str(e[2])
+		var col := "#e8e2d4"
+		if kind.ends_with("good"):
+			col = "#9fe08a"
+		elif kind.ends_with("bad"):
+			col = "#ff9a85"
+		elif kind == "major":
+			col = "#9fd8ff"
+		lines.append("[color=#a9a39a]%s[/color]  [color=%s]%s[/color]" % [date.substr(0, date.find(",")), col, str(e[1]).replace("[", "(").replace("]", ")")])
+	if lines.is_empty():
+		lines.append("Nothing of note has happened yet.")
+	rt.text = "\n".join(lines).strip_edges()
+	pause_box.add_child(HSeparator.new())
+	pause_box.add_child(_button("Back", _fill_pause_menu.bind("", "main")))
 
 
 func _on_save(slot: int) -> void:

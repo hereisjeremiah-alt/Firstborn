@@ -59,7 +59,9 @@ var next_deal_id := 1
 var play_secs := 0.0            # real seconds played while unpaused (diplomacy waits)
 var diplo_cd := {}              # "a>b:kind" -> play_secs when that request may be made again
 var stumps := {}                # tile index -> [tree type, sim day felled]: trees that will grow back
-var road_tiles := {}            # tile index -> true: every finished road (for drawing)
+var road_tiles := {}            # tile index -> civ id of the tribe that built it
+var road_version := 0           # bumped whenever a road is laid or taken up (maps redraw)
+var history: Array = []         # [date text, text, kind]: the world history (pause menu)
 var fx: Array = []              # combat visuals waiting to be drawn (see Fx)
 var fx_on := false              # set by the game while people are drawn
 var land_scale := 1.0           # wildlife numbers scale with the amount of land
@@ -142,8 +144,30 @@ func found_tribes(player_tile: Vector2i, ai_count: int) -> void:
 		emit_signal("event", "%s and %s awaken in an untamed land. Find water, food and shelter." % [first.name, second.name], "info")
 	else:
 		emit_signal("event", "%s, %s and %d others awaken in an untamed land. Find water, food and shelter." % [first.name, second.name, colony.people.size() - 2], "info")
+	_hook_history()
+	chronicle("%s: the first camp is made." % colony.name, "good")
 	if colonies.size() > 1:
 		emit_signal("event", "Rumours speak of %d other tribes somewhere in this land." % (colonies.size() - 1), "info")
+
+
+# ================================================================ world history
+func _hook_history() -> void:
+	if not event.is_connected(_record_history):
+		event.connect(_record_history)
+
+
+func _record_history(text: String, kind: String) -> void:
+	if kind.begins_with("major") or text.begins_with("Your tribe has perished"):
+		chronicle(text, kind)
+
+
+## Writes a line into the world history.
+func chronicle(text: String, kind := "info") -> void:
+	if not history.is_empty() and str(history[-1][1]) == text:
+		return
+	history.append([time.date_text(), text, kind])
+	if history.size() > 600:
+		history = history.slice(history.size() - 600)
 
 
 func _found_colony(civ_id: int, home: Vector2i) -> Colony:
@@ -166,7 +190,8 @@ func _found_colony(civ_id: int, home: Vector2i) -> Colony:
 	c.home = home
 	c.money = Config.rule("start_money")
 	c.research_share = Config.rule("research_share")
-	c.auto_expand = civ_id != 0
+	c.auto_expand = true
+	c.auto_roads = true
 	colonies.append(c)
 	var hs := states.at(home)
 	if hs >= 0 and states.owners[hs] < 0:
@@ -226,6 +251,7 @@ func new_tribe(home: Vector2i, race: int) -> Colony:
 	c.home = home
 	c.research_share = Config.rule("research_share")
 	c.auto_expand = true
+	c.auto_roads = true
 	colonies.append(c)
 	var hs := states.at(home)
 	if hs >= 0 and int(states.owners[hs]) < 0:
@@ -885,6 +911,16 @@ func can_place(c: Colony, type: String, t: Vector2i) -> String:
 	return ""
 
 
+## The hut or house a sleeping person is lying in (null when they sleep outdoors).
+func indoors(p: Human) -> Building:
+	if not p.sleeping:
+		return null
+	var b := building_at(world.tile_of(p.pos))
+	if b != null and b.built and b.housing() > 0:
+		return b
+	return null
+
+
 func _road_planned(i: int) -> bool:
 	for oc in colonies:
 		if oc.road_marks.has(i):
@@ -988,14 +1024,21 @@ func lay_road(c: Colony, i: int) -> void:
 		return
 	var q := Vector2i(i % world.w, i / world.w)
 	world.road[i] = 2 if world.bridgeable(q) else 1
-	road_tiles[i] = true
+	road_tiles[i] = c.civ_id
+	road_version += 1
 	paths.refresh_tile(q)
 	if world.road[i] == 2:
 		_reach_cache.clear()          # a bridge can join two lands
 
 
+var last_removed_roads: Array = []    # [tile index, civ id] of built roads the last remove_roads() took up
+
+
+## Removes road plans and roads in a box. Your own roads (and unowned ones) go at once;
+## roads of a tribe you are at war with are marked, and your Billies go and tear them up.
 func remove_roads(c: Colony, t0: Vector2i, t1: Vector2i) -> int:
 	var n := 0
+	last_removed_roads = []
 	for y in range(mini(t0.y, t1.y), maxi(t0.y, t1.y) + 1):
 		for x in range(mini(t0.x, t1.x), maxi(t0.x, t1.x) + 1):
 			var q := Vector2i(x, y)
@@ -1004,13 +1047,51 @@ func remove_roads(c: Colony, t0: Vector2i, t1: Vector2i) -> int:
 			var i := world.idx(q)
 			if c.road_marks.erase(i):
 				n += 1
-			if world.road[i] != 0 and states.owner_at(q) in [-1, c.civ_id]:
-				world.road[i] = 0
-				road_tiles.erase(i)
-				paths.refresh_tile(q)
-				_reach_cache.clear()
+			if world.road[i] == 0:
+				continue
+			var owner := int(road_tiles.get(i, -1))
+			var oc := civ(owner) if owner >= 0 else null
+			if owner == c.civ_id or oc == null or oc.collapsed:
+				last_removed_roads.append([i, owner])
+				remove_road_tile(i)
+				n += 1
+			elif at_war(c.civ_id, owner) and not c.wreck_marks.has(i):
+				c.wreck_marks[i] = true
 				n += 1
 	return n
+
+
+## Takes up one finished road or bridge tile.
+func remove_road_tile(i: int) -> void:
+	if world.road[i] == 0:
+		return
+	var q := Vector2i(i % world.w, i / world.w)
+	world.road[i] = 0
+	road_tiles.erase(i)
+	road_version += 1
+	paths.refresh_tile(q)
+	_reach_cache.clear()
+
+
+## Lays a road tile again (undo in the town planner).
+func restore_road_tile(i: int, owner: int) -> void:
+	if world.road[i] != 0 or building_tiles.has(i):
+		return
+	var q := Vector2i(i % world.w, i / world.w)
+	world.road[i] = 2 if world.bridgeable(q) else 1
+	road_tiles[i] = owner
+	road_version += 1
+	paths.refresh_tile(q)
+	_reach_cache.clear()
+
+
+## A Billy at war tore up an enemy road tile.
+func wreck_road(c: Colony, i: int) -> void:
+	var owner := int(road_tiles.get(i, -1))
+	remove_road_tile(i)
+	c.wreck_marks.erase(i)
+	if owner == 0 and c.civ_id != 0 and rng.randf() < 0.25:
+		emit_signal("event", "The %s are tearing up your roads!" % c.name, "warn")
 
 
 func _register_building_tiles(b: Building) -> void:
@@ -1334,6 +1415,8 @@ func military_strength(c: Colony) -> float:
 
 ## Towers shoot at enemies at war (and predators) within range.
 var _tower_acc := 0.0
+## Towers, lookouts and siege engines shoot at whatever is in range: towers at enemy people
+## (and predators), siege engines at enemy buildings first.
 func _update_towers(dt: float) -> void:
 	_tower_acc += dt
 	if _tower_acc < 0.2 and tower_shots.is_empty():
@@ -1343,18 +1426,42 @@ func _update_towers(dt: float) -> void:
 	for c in colonies:
 		if c.collapsed:
 			continue
+		var foes: Array = []
+		var foes_done := false
 		for b in c.buildings:
-			if b.type != "watchtower" and b.type != "arrow_tower" or not b.built:
+			if not b.built or not b.def().has("shoots"):
 				continue
 			b.shoot_cd -= dt
 			if b.shoot_cd > 0.0:
 				continue
+			if not foes_done:
+				foes = enemies_of(c.civ_id, true)
+				foes_done = true
 			var sh: Dictionary = b.def()["shoots"]
 			var rng_px := float(sh["range"]) * Defs.TILE
 			var center: Vector2 = b.center()
+			var ammo := str(sh.get("ammo", "arrow"))
+			var flight := 0.7 if ammo == "boulder" else 0.25
+			if bool(sh.get("siege", false)):
+				var tb: Building = null
+				var bd := rng_px * rng_px
+				for oc in foes:
+					for ob in oc.buildings:
+						if not ob.built:
+							continue
+						var d2: float = ob.center().distance_squared_to(center)
+						if d2 < bd:
+							bd = d2
+							tb = ob
+				if tb != null:
+					b.shoot_cd = float(sh["cd"])
+					tower_shots.append([center, tb.center(), flight, ammo, flight])
+					Fx.smash(self, tb.center(), center)
+					damage_building(tb, float(sh["dmg"]), c.civ_id)
+					continue
 			var target: Human = null
 			var best := rng_px * rng_px
-			for oc in enemies_of(c.civ_id):
+			for oc in foes:
 				for p in oc.people:
 					if not p.alive or p.at_sea():
 						continue
@@ -1364,7 +1471,7 @@ func _update_towers(dt: float) -> void:
 						target = p
 			if target != null:
 				b.shoot_cd = float(sh["cd"])
-				tower_shots.append([center, target.pos, 0.25])
+				tower_shots.append([center, target.pos, flight, ammo, flight])
 				if rng.randf() < 0.7:
 					target.health -= float(sh["dmg"]) * (1.0 - minf(0.6, col_of(target).bonus("defense")))
 					Fx.hit(self, target.pos, target.pos + Vector2(0, -20), float(sh["dmg"]), "pierce")
@@ -1372,10 +1479,12 @@ func _update_towers(dt: float) -> void:
 					if target.health <= 0.0:
 						kill(target, "shot from a %s of the %s" % [b.display_name().to_lower(), c.name])
 				continue
+			if bool(sh.get("siege", false)):
+				continue
 			for a in predators:
 				if a.alive and a.pos.distance_squared_to(center) < rng_px * rng_px:
 					b.shoot_cd = float(sh["cd"])
-					tower_shots.append([center, a.pos, 0.25])
+					tower_shots.append([center, a.pos, flight, ammo, flight])
 					AnimalAI.damage(self, a, float(sh["dmg"]), null)
 					break
 	var keep: Array = []
@@ -1645,7 +1754,7 @@ func to_dict() -> Dictionary:
 		"next_id": next_id, "next_animal_id": next_animal_id, "next_bid": next_bid,
 		"ships": ships.map(func(sh): return sh.to_dict()), "next_ship_id": next_ship_id,
 		"used_names": used_names.keys(), "rng": rng.state, "last_day": _last_day,
-		"defect_asks": defect_asks.duplicate(true), "borders": Borders.to_dict(self), "play_secs": play_secs, "diplo_cd": diplo_cd.duplicate(), "roads": road_tiles.keys(), "stumps_i": stumps.keys(), "stumps_v": stumps.values(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
+		"defect_asks": defect_asks.duplicate(true), "borders": Borders.to_dict(self), "play_secs": play_secs, "diplo_cd": diplo_cd.duplicate(), "roads": road_tiles.keys(), "road_civ": road_tiles.values(), "history": history.duplicate(true), "stumps_i": stumps.keys(), "stumps_v": stumps.values(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
 	}
 
 
@@ -1716,10 +1825,16 @@ func from_dict(d: Dictionary) -> void:
 			people_all.append(p)
 			people_by_id[p.id] = p
 	road_tiles.clear()
-	for i in d.get("roads", []):
-		var rq := Vector2i(int(i) % world.w, int(i) / world.w)
-		world.road[int(i)] = 2 if world.bridgeable(rq) else 1
-		road_tiles[int(i)] = true
+	var rciv: Array = d.get("road_civ", [])
+	var rk: Array = d.get("roads", [])
+	for n in rk.size():
+		var i := int(rk[n])
+		var rq := Vector2i(i % world.w, i / world.w)
+		world.road[i] = 2 if world.bridgeable(rq) else 1
+		road_tiles[i] = int(rciv[n]) if n < rciv.size() else 0
+	road_version += 1
+	history = d.get("history", [])
+	_hook_history()
 	for c in colonies:
 		refresh_zones(c)
 	fog.from_save(world, d.get("fog", {}))

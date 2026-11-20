@@ -248,6 +248,7 @@ static func pct_text(r: float) -> String:
 
 # ---------------------------------------------------------------- periodic
 static func hourly(sim: Sim, c: Colony) -> void:
+	Conditions.hourly(sim, c)
 	var people := c.living()
 	var freq := Config.rule("illness_freq")
 	for p in people:
@@ -302,6 +303,7 @@ static func hourly(sim: Sim, c: Colony) -> void:
 
 
 static func daily(sim: Sim, c: Colony) -> void:
+	Conditions.daily(sim, c)
 	var season := sim.time.season()
 	# --- food spoilage
 	var mod := 1.0 - c.preservation()

@@ -82,9 +82,20 @@ func _draw() -> void:
 		for a in sim.animals:
 			if a.alive and not a.def().get("flying", false) and view.has_point(a.pos):
 				_draw_animal(a)
+		var sleepers := {}
 		for p in sim.people_all:
 			if p.alive and not p.at_sea() and view.has_point(p.pos):
+				var inside := sim.indoors(p)
+				if inside != null and not (game.selected_ids.has(p.id) or p.id == game.selected_human_id):
+					sleepers[inside] = int(sleepers.get(inside, 0)) + 1     # asleep inside: hidden
+					continue
 				_draw_human(p, game.selected_ids.has(p.id) or p.id == game.selected_human_id, zoom, sim.col_of(p).color)
+		# a few drifting z's over every home with people asleep inside
+		for hb in sleepers.keys():
+			var top: Vector2 = Vector2(hb.tile) * Defs.TILE + Vector2(hb.size().x * Defs.TILE * 0.7, -2.0)
+			for k in mini(3, int(sleepers[hb])):
+				var zt := fmod(Time.get_ticks_msec() / 1000.0 + k * 0.7, 2.0)
+				draw_string(font, top + Vector2(k * 4.0, -zt * 5.0 - k * 3.0), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 9 + k, Color(1, 1, 1, 1.0 - zt * 0.45))
 		for a in sim.animals:
 			if a.alive and a.def().get("flying", false) and view.has_point(a.pos):
 				_draw_animal(a)
@@ -104,16 +115,133 @@ func _draw() -> void:
 	for sh in sim.tower_shots:
 		var a0: Vector2 = sh[0]
 		var a1: Vector2 = sh[1]
-		var ph := 1.0 - float(sh[2]) / 0.25
+		var total := float(sh[4]) if sh.size() > 4 else 0.25
+		var ammo := str(sh[3]) if sh.size() > 3 else "arrow"
+		var ph := clampf(1.0 - float(sh[2]) / total, 0.0, 1.0)
 		var at := a0.lerp(a1, ph)
 		var dir := (a1 - a0).normalized()
-		draw_line(at - dir * 5.0, at, Color(0.25, 0.18, 0.1), 1.2)
+		if ammo == "boulder":
+			at.y -= sin(ph * PI) * a0.distance_to(a1) * 0.35       # a high arc
+			draw_circle(at + Vector2(1, 1), 3.2, Color(0, 0, 0, 0.3))
+			draw_circle(at, 3.0, Color(0.52, 0.50, 0.46))
+			draw_circle(at - Vector2(0.8, 0.8), 1.4, Color(0.68, 0.66, 0.62))
+		elif ammo == "rock":
+			at.y -= sin(ph * PI) * 6.0
+			draw_circle(at, 1.4, Color(0.45, 0.43, 0.40))
+		else:
+			draw_line(at - dir * 5.0, at, Color(0.25, 0.18, 0.1), 1.2)
 	if detail:
 		_draw_fx(sim, view, zoom)
 	_draw_selection(sim)
 	_draw_ghost(sim)
 	_draw_markers(sim, view, zoom, fast)
 	_draw_orders(zoom)
+
+
+# ------------------------------------------------------------------ war structures
+func _war_structure(sim: Sim, b: Building, o: Vector2, s: Vector2, m: Color) -> void:
+	var tribe: Color = sim.civ(b.civ_id).color
+	var wood := Color(0.50, 0.34, 0.18) * m
+	var dark := Color(0.32, 0.21, 0.11) * m
+	var stone := Color(0.62, 0.60, 0.56) * m
+	var tsec := Time.get_ticks_msec() / 1000.0
+	var c := o + s * 0.5
+	match b.type:
+		"lookout_perch":
+			# four poles, a small platform and a pile of throwing rocks
+			for pt in [Vector2(3, 3), Vector2(13, 3), Vector2(3, 13), Vector2(13, 13)]:
+				draw_line(o + pt + Vector2(0, 2), o + pt - Vector2(0, 2), dark, 1.6)
+			draw_rect(Rect2(o + Vector2(2, 2), Vector2(12, 9)), wood)
+			for k in 3:
+				draw_line(o + Vector2(2, 4 + k * 3), o + Vector2(14, 4 + k * 3), dark, 0.7)
+			_pile(o + Vector2(8, 13), 3.0, Color(0.55, 0.54, 0.50) * m)
+			draw_circle(o + Vector2(8, 5), 1.6, tribe * m)
+		"sling_platform":
+			# raised stone platform with a parapet
+			draw_rect(Rect2(o + Vector2(1, 1), Vector2(14, 14)), stone.darkened(0.2))
+			draw_rect(Rect2(o + Vector2(2, 2), Vector2(12, 12)), stone)
+			for k in 4:
+				draw_rect(Rect2(o + Vector2(2 + k * 3.6, 1), Vector2(2, 2)), stone.lightened(0.15))
+			draw_rect(Rect2(o + Vector2(5, 5), Vector2(6, 6)), Color(0.42, 0.34, 0.24) * m)
+			draw_circle(o + Vector2(8, 8), 1.5, tribe * m)
+			var sw := tsec * 6.0 + b.id
+			draw_line(o + Vector2(8, 8), o + Vector2(8, 8) + Vector2(cos(sw), sin(sw)) * 4.0, Color(0.6, 0.5, 0.35) * m, 0.8)
+		"bastion":
+			# squat bronze-capped strong point with four corner turrets
+			var r := Rect2(o + Vector2(2, 2), s - Vector2(4, 4))
+			draw_rect(r, stone.darkened(0.15))
+			draw_rect(r.grow(-2), stone)
+			for pt in [r.position, r.position + Vector2(r.size.x, 0), r.position + Vector2(0, r.size.y), r.end]:
+				draw_circle(pt, 4.0, stone.darkened(0.3))
+				draw_circle(pt, 3.0, Color(0.80, 0.55, 0.25) * m)      # bronze caps
+			draw_rect(Rect2(c - Vector2(5, 5), Vector2(10, 10)), Color(0.45, 0.36, 0.26) * m)
+			draw_circle(c, 1.8, tribe * m)
+		"ballista_tower":
+			# round stone tower with a great crossbow on top
+			draw_circle(c + Vector2(1, 1), 13.5, Color(0, 0, 0, 0.25 * m.a))
+			draw_circle(c, 13.0, stone.darkened(0.25))
+			draw_circle(c, 11.5, stone)
+			for k in 10:
+				var ang := k * TAU / 10.0
+				draw_rect(Rect2(c + Vector2(cos(ang), sin(ang)) * 10.5 - Vector2(1.5, 1.5), Vector2(3, 3)), stone.lightened(0.15))
+			draw_circle(c, 7.0, Color(0.40, 0.32, 0.22) * m)
+			var aim := tsec * 0.4 + b.id
+			var dv := Vector2(cos(aim), sin(aim))
+			draw_line(c - dv * 5.0, c + dv * 6.0, dark, 2.2)                          # stock
+			draw_line(c + dv * 3.0 + dv.orthogonal() * 6.0, c + dv * 3.0 - dv.orthogonal() * 6.0, Color(0.35, 0.35, 0.38) * m, 1.8)   # iron bow
+			draw_circle(c, 1.4, tribe * m)
+		"war_drum_circle":
+			draw_circle(c, s.x * 0.45, Color(0.55, 0.45, 0.30, 0.5 * m.a))
+			for k in 4:
+				var ang := k * TAU / 4.0 + 0.4
+				var dp := c + Vector2(cos(ang), sin(ang)) * 8.5
+				draw_circle(dp + Vector2(1, 1), 4.0, Color(0, 0, 0, 0.25 * m.a))
+				draw_circle(dp, 4.0, Color(0.48, 0.30, 0.16) * m)
+				var beat := 0.5 + 0.5 * sin(tsec * 8.0 + k * 1.7)
+				draw_circle(dp, 3.0, Color(0.88, 0.80, 0.62).lerp(Color(1, 0.95, 0.85), beat * 0.4) * m)   # hide skin
+			draw_circle(c, 3.0, Color(0.30, 0.28, 0.26) * m)                    # fire pit
+			draw_circle(c, 1.8, Color(1.0, 0.55, 0.15, (0.6 + 0.4 * sin(tsec * 9.0)) * m.a))
+			if b.built:
+				draw_line(c + Vector2(9, -12), c + Vector2(9, 2), dark, 1.2)
+				draw_colored_polygon(PackedVector2Array([c + Vector2(9, -12), c + Vector2(16, -10), c + Vector2(9, -8)]), tribe * m)
+		"ram_shed":
+			_gable_roof(Rect2(o + Vector2(1, 1), Vector2(s.x - 2, s.y - 12)), Color(0.42, 0.30, 0.18) * m, 1, m)
+			# the ram: a big log on wheels with an iron-capped head
+			var ry := o.y + s.y - 7
+			draw_rect(Rect2(Vector2(o.x + 6, ry - 2), Vector2(s.x - 14, 4)), Color(0.55, 0.38, 0.20) * m)
+			draw_circle(Vector2(o.x + s.x - 8, ry), 2.6, Color(0.40, 0.40, 0.42) * m)
+			for wx in [o.x + 10, o.x + s.x - 16]:
+				draw_circle(Vector2(wx, ry + 3), 2.6, dark)
+				draw_circle(Vector2(wx, ry + 3), 1.0, wood)
+		"catapult":
+			var base := Rect2(o + Vector2(4, 8), Vector2(s.x - 8, s.y - 14))
+			draw_rect(base, wood)
+			draw_rect(base, dark, false, 1.0)
+			for wx in [base.position.x + 1, base.end.x - 1]:
+				for wy in [base.position.y, base.end.y]:
+					draw_circle(Vector2(wx, wy), 2.6, dark)
+			var arm := -0.9 + 0.25 * sin(tsec * 0.8 + b.id)
+			var piv := c + Vector2(0, 1)
+			var tip := piv + Vector2(cos(arm - PI * 0.5), sin(arm - PI * 0.5)) * 12.0
+			draw_line(piv, tip, Color(0.45, 0.30, 0.16) * m, 2.0)
+			draw_circle(tip, 2.4, Color(0.40, 0.30, 0.20) * m)                  # bucket
+			draw_circle(tip, 1.4, Color(0.62, 0.60, 0.56) * m)                  # boulder
+			_pile(o + Vector2(s.x - 6, s.y - 5), 3.0, Color(0.55, 0.54, 0.50) * m)
+		"trebuchet":
+			# tall A-frame, long throwing arm and a counterweight box
+			var fy := o.y + s.y - 6
+			draw_line(Vector2(o.x + 8, fy), Vector2(c.x, o.y + 10), dark, 2.2)
+			draw_line(Vector2(o.x + s.x - 8, fy), Vector2(c.x, o.y + 10), dark, 2.2)
+			draw_line(Vector2(o.x + 5, fy), Vector2(o.x + s.x - 5, fy), wood, 2.4)
+			var arm2 := 0.6 + 0.15 * sin(tsec * 0.5 + b.id)
+			var pv := Vector2(c.x, o.y + 10)
+			var adir := Vector2(cos(arm2 + PI), sin(arm2 + PI))
+			draw_line(pv - adir * 9.0, pv + adir * 20.0, Color(0.50, 0.34, 0.18) * m, 2.0)
+			var cw := pv - adir * 9.0
+			draw_rect(Rect2(cw - Vector2(4, 1), Vector2(8, 7)), Color(0.38, 0.30, 0.22) * m)   # counterweight
+			draw_line(pv + adir * 20.0, pv + adir * 20.0 + Vector2(0, 7), Color(0.75, 0.70, 0.55) * m, 0.8)  # sling rope
+			draw_circle(pv + adir * 20.0 + Vector2(0, 8), 2.0, Color(0.62, 0.60, 0.56) * m)
+			draw_circle(pv, 1.6, Color(0.35, 0.35, 0.38) * m)
 
 
 # ------------------------------------------------------------------ monolith & bandit camp
@@ -222,7 +350,8 @@ const ROAD_EDGE := Color(0.45, 0.35, 0.22)
 func _draw_town_plan(sim: Sim, view: Rect2, zoom: float) -> void:
 	var w := sim.world.w
 	var T := float(Defs.TILE)
-	var planning: bool = game.tool_mode.begins_with("zone") or game.tool_mode.ends_with("road") or (game.hud != null and game.hud.planner != null and game.hud.planner.visible)
+	var planning: bool = game.tool_mode.begins_with("zone") or game.tool_mode.ends_with("road") or (game.hud != null and game.hud.planner != null and game.hud.planner.visible) \
+		or game.build_mode != "" or (game.hud != null and game.hud.build_layer != null and game.hud.build_layer.visible)
 	# zones: tinted tiles while planning
 	if planning:
 		for i in sim.colony.zones.keys():
@@ -286,6 +415,13 @@ func _draw_town_plan(sim: Sim, view: Rect2, zoom: float) -> void:
 		var tp := Vector2(ii % w, ii / w) * T
 		if view.has_point(tp):
 			draw_rect(Rect2(tp + Vector2(4, 4), Vector2(8, 8)), Color(0.95, 0.8, 0.45, 0.8), false, 1.0)
+	# enemy roads your Billies will tear up
+	for i in sim.colony.wreck_marks.keys():
+		var ii := int(i)
+		var tp := Vector2(ii % w, ii / w) * T
+		if view.has_point(tp):
+			draw_line(tp + Vector2(3, 3), tp + Vector2(13, 13), Color(1, 0.25, 0.2, 0.95), 2.0)
+			draw_line(tp + Vector2(13, 3), tp + Vector2(3, 13), Color(1, 0.25, 0.2, 0.95), 2.0)
 	# live drag preview
 	if game.clear_dragging and game.tool_mode != "clear":
 		var a: Vector2 = game.clear_start
@@ -686,7 +822,9 @@ const SHADOW_HEIGHT := {"campfire": 0.0, "fence": 3.0, "wall": 7.0, "gate": 8.0,
 	"capitol": 20.0, "map_table": 3.0, "arrow_tower": 24.0, "farm": 0.0, "bedding": 2.0, "drying_rack": 5.0,
 	"research_table": 3.0, "well": 3.0, "shelter": 10.0, "stone_hut": 10.0, "house": 14.0, "stone_house": 16.0,
 	"storage": 8.0, "granary": 12.0, "workshop": 12.0, "healer_hut": 10.0, "mine": 8.0, "hunting_camp": 9.0,
-	"watchtower": 22.0, "harbor": 6.0, "monolith": 0.0, "lumber_yard": 0.0, "mercenary_hall": 12.0, "bandit_camp": 0.0}
+	"watchtower": 22.0, "harbor": 6.0, "monolith": 0.0, "lumber_yard": 0.0, "mercenary_hall": 12.0, "bandit_camp": 0.0,
+	"lookout_perch": 14.0, "war_drum_circle": 0.0, "sling_platform": 12.0, "ram_shed": 9.0, "bastion": 18.0, "catapult": 8.0,
+	"ballista_tower": 24.0, "trebuchet": 22.0}
 const ROOFS := [Color(0.72, 0.62, 0.34), Color(0.66, 0.58, 0.30), Color(0.45, 0.30, 0.18), Color(0.70, 0.30, 0.22)]
 
 
@@ -709,6 +847,8 @@ func _draw_building(sim: Sim, b: Building) -> void:
 		elif b.type != "fence":
 			_shadow(o + Vector2(1, 1), s - Vector2(2, 2), height * (1.0 + b.tier * 0.5))
 	match b.type:
+		"lookout_perch", "war_drum_circle", "sling_platform", "ram_shed", "bastion", "catapult", "ballista_tower", "trebuchet":
+			_war_structure(sim, b, o, s, m)
 		"monolith":
 			_monolith(o, s, b.built, m)
 		"lumber_yard":

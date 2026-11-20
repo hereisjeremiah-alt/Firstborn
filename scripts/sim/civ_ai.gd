@@ -18,6 +18,10 @@ static func update(sim: Sim, c: Colony) -> void:
 		plan_defenses(sim, c)
 	if c.auto_expand:
 		expand(sim, c)
+	if c.auto_roads:
+		plan_roads(sim, c)
+	if not c.is_player or c.auto_build:
+		mark_enemy_roads(sim, c)
 	if not c.is_player:
 		Military.ai_hire(sim, c)
 		Deals.ai_turn(sim, c)
@@ -31,6 +35,9 @@ static func update(sim: Sim, c: Colony) -> void:
 			c.convert_knowledge()
 		if c.auto_research:
 			research_cheapest(c)
+		if c.auto_advance and c.can_advance_era() and c.advance_era():
+			sim.emit_signal("event", "Your tribe has entered the %s! New research and buildings are available." % c.era, "major_good")
+			sim.emit_signal("buildings_changed")
 		if c.gov_pending and sim.debug_log:
 			choose_government(sim, c)        # headless tests pick for the player
 
@@ -272,6 +279,23 @@ static func next_building(sim: Sim, c: Colony) -> String:
 		return "watchtower"
 	if c.is_unlocked("arrow_tower") and c.count_type("arrow_tower") < 2 + pop / 10 and pop >= 8:
 		return "arrow_tower"
+	# the best defensive post the tribe knows, and a few war structures
+	var war := not sim.enemies_of(c.civ_id).is_empty()
+	for dt in ["ballista_tower", "bastion", "sling_platform", "lookout_perch"]:
+		if c.is_unlocked(dt):
+			if pop >= 6 and c.count_type(dt) < (1 if pop < 12 else 2) + (1 if war else 0):
+				return dt
+			break
+	if c.is_unlocked("war_drum_circle") and c.count_type("war_drum_circle") == 0 and (pop >= 8 or war):
+		return "war_drum_circle"
+	if c.is_unlocked("ram_shed") and c.count_type("ram_shed") == 0 and (pop >= 12 or war) and pop >= 6:
+		return "ram_shed"
+	if war and pop >= 8:
+		for st in ["trebuchet", "catapult"]:
+			if c.is_unlocked(st):
+				if c.count_type(st) == 0:
+					return st
+				break
 	if fires < 1 + pop / 10:
 		return "campfire"
 	if stores < 1 + pop / 12:
@@ -483,8 +507,16 @@ static func diplomacy(sim: Sim, c: Colony) -> void:
 
 
 ## Finds a free spot near the tribe's home, leaving a walkway around every building.
+## Buildings go into a zone of the right kind first when the tribe has painted one.
 static func find_site(sim: Sim, c: Colony, type: String) -> Vector2i:
 	var sz: Vector2i = Defs.BUILDINGS[type]["size"]
+	if type == "catapult" or type == "trebuchet":
+		var fs := _front_site(sim, c, type, sz)
+		if fs.x >= 0:
+			return fs
+	var zs := _zone_site(sim, c, type, sz)
+	if zs.x >= 0:
+		return zs
 	var r0 := 1
 	var r1 := 12
 	if type == "farm":
@@ -525,3 +557,214 @@ static func _has_clearance(sim: Sim, t: Vector2i, sz: Vector2i) -> bool:
 			if sim.building_tiles.has(sim.world.idx(q)):
 				return false
 	return true
+
+
+## A spot whose middle lies inside a zone that suits the building (nearest home first).
+static func _zone_site(sim: Sim, c: Colony, type: String, sz: Vector2i) -> Vector2i:
+	var z := Defs.zone_for(type)
+	if z <= 0 or c.zones.is_empty():
+		return Vector2i(-1, -1)
+	var cands: Array = []
+	for i in c.zones.keys():
+		if int(c.zones[i]) == z:
+			cands.append(Vector2i(int(i) % sim.world.w, int(i) / sim.world.w))
+	if cands.is_empty():
+		return Vector2i(-1, -1)
+	var home := c.home
+	cands.sort_custom(func(a, b): return Vector2(a).distance_squared_to(Vector2(home)) < Vector2(b).distance_squared_to(Vector2(home)))
+	var tries := 0
+	for center in cands:
+		tries += 1
+		if tries > 500:
+			break
+		var t: Vector2i = center - Vector2i(sz.x / 2, sz.y / 2)
+		if sim.can_place(null, type, t) != "":
+			continue
+		var so := sim.states.owner_at(t)
+		if so >= 0 and so != c.civ_id:
+			continue
+		if not _has_clearance(sim, t, sz):
+			continue
+		return t
+	return Vector2i(-1, -1)
+
+
+# ================================================================ roads
+const ROAD_SKIP := ["wall", "gate", "fence", "monolith"]
+
+
+## Every so often the tribe lays a road from a building that has none to the nearest road
+## (or to the main campfire), so its villages grow a street network on their own.
+static func plan_roads(sim: Sim, c: Colony) -> void:
+	if sim.rng.randf() < 0.01:
+		c.road_tried.clear()        # look again now and then (roads get torn up, buildings move)
+	if c.population() < 2 or c.road_marks.size() > 10 or sim.rng.randf() > 0.25:
+		return
+	var hub := c.home + Vector2i(0, 2)
+	var fire := c.nearest_building(sim.world.center_of(c.home), "campfire")
+	if fire != null and fire.built:
+		hub = fire.tile + Vector2i(0, fire.size().y)
+	var blds: Array = []
+	for b in c.buildings:
+		if b.built and not ROAD_SKIP.has(b.type) and not c.road_tried.has(b.id):
+			blds.append(b)
+	if blds.is_empty():
+		return
+	blds.sort_custom(func(a, b): return Vector2(a.tile).distance_squared_to(Vector2(hub)) < Vector2(b.tile).distance_squared_to(Vector2(hub)))
+	for b in blds:
+		if _road_next_to(sim, b):
+			c.road_tried[b.id] = true
+			continue
+		if Vector2(b.center_tile()).distance_to(Vector2(hub)) < 2.5:
+			c.road_tried[b.id] = true
+			continue
+		c.road_tried[b.id] = true
+		var door := _door_tile(sim, b)
+		if door.x < 0:
+			continue
+		var target := _nearest_own_road(sim, c, door, 24)
+		if target.x < 0:
+			target = hub
+		var path := _best_l_path(sim, c, door, target)
+		if path.size() > 40 or path.is_empty():
+			continue
+		if sim.plan_road(c, path) > 0:
+			return
+
+
+static func _road_next_to(sim: Sim, b: Building) -> bool:
+	var s := b.size()
+	for y in range(b.tile.y - 1, b.tile.y + s.y + 1):
+		for x in range(b.tile.x - 1, b.tile.x + s.x + 1):
+			var q := Vector2i(x, y)
+			if sim.world.inb(q) and sim.world.road[sim.world.idx(q)] != 0:
+				return true
+	return false
+
+
+## A free tile just outside the building, preferring the side facing down (its door).
+static func _door_tile(sim: Sim, b: Building) -> Vector2i:
+	var s := b.size()
+	for q in [b.tile + Vector2i(s.x / 2, s.y), b.tile + Vector2i(s.x, s.y / 2), b.tile + Vector2i(-1, s.y / 2), b.tile + Vector2i(s.x / 2, -1)]:
+		if sim.road_ok(q):
+			return q
+	return Vector2i(-1, -1)
+
+
+static func _nearest_own_road(sim: Sim, c: Colony, from: Vector2i, r: int) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := 1e18
+	for i in sim.road_tiles.keys():
+		if int(sim.road_tiles[i]) != c.civ_id:
+			continue
+		var q := Vector2i(int(i) % sim.world.w, int(i) / sim.world.w)
+		if absi(q.x - from.x) > r or absi(q.y - from.y) > r:
+			continue
+		var d := Vector2(q).distance_squared_to(Vector2(from))
+		if d < best_d:
+			best_d = d
+			best = q
+	for i in c.road_marks.keys():
+		var q := Vector2i(int(i) % sim.world.w, int(i) / sim.world.w)
+		var d := Vector2(q).distance_squared_to(Vector2(from))
+		if d < best_d and d <= r * r:
+			best_d = d
+			best = q
+	return best
+
+
+## The L-shaped road (x first or y first) with fewer tiles in the way; tiles abroad are dropped.
+static func _best_l_path(sim: Sim, c: Colony, a: Vector2i, b: Vector2i) -> Array:
+	var best: Array = []
+	var best_bad := 1 << 30
+	for xfirst in [true, false]:
+		var tiles: Array = []
+		var sx := 1 if b.x >= a.x else -1
+		var sy := 1 if b.y >= a.y else -1
+		if xfirst:
+			for x in range(a.x, b.x + sx, sx):
+				tiles.append(Vector2i(x, a.y))
+			for y in range(a.y + sy, b.y + sy, sy):
+				tiles.append(Vector2i(b.x, y))
+		else:
+			for y in range(a.y, b.y + sy, sy):
+				tiles.append(Vector2i(a.x, y))
+			for x in range(a.x + sx, b.x + sx, sx):
+				tiles.append(Vector2i(x, b.y))
+		var bad := 0
+		var keep: Array = []
+		for q in tiles:
+			if not sim.world.inb(q):
+				bad += 5
+				continue
+			var i := sim.world.idx(q)
+			var so := sim.states.owner_at(q)
+			if so >= 0 and so != c.civ_id:
+				bad += 3
+				continue
+			if sim.building_tiles.has(i):
+				bad += 2
+				continue
+			if sim.world.bridgeable(q):
+				bad += 1        # bridges cost wood: prefer land
+			if sim.world.road[i] == 0:
+				keep.append(q)
+		if bad < best_bad:
+			best_bad = bad
+			best = keep
+	return best
+
+
+## At war, tribes send Billies to tear up the enemy's roads near their own land.
+static func mark_enemy_roads(sim: Sim, c: Colony) -> void:
+	if sim.rng.randf() > 0.25:
+		return
+	var foes := sim.enemies_of(c.civ_id)
+	if foes.is_empty():
+		if not c.wreck_marks.is_empty() and not c.is_player:
+			c.wreck_marks.clear()
+		return
+	if c.is_player or c.wreck_marks.size() >= 4:
+		return          # the player picks roads to wreck with the Remove road tool
+	var ids := {}
+	for f in foes:
+		ids[f.civ_id] = true
+	var home := c.home
+	var cands: Array = []
+	for i in sim.road_tiles.keys():
+		if not ids.has(int(sim.road_tiles[i])):
+			continue
+		var q := Vector2i(int(i) % sim.world.w, int(i) / sim.world.w)
+		var d := Vector2(q).distance_to(Vector2(home))
+		if d < 45.0:
+			cands.append([d, int(i)])
+	cands.sort_custom(func(x, y): return float(x[0]) < float(y[0]))
+	for k in mini(4, cands.size()):
+		c.wreck_marks[int(cands[k][1])] = true
+
+
+## A spot on the tribe's own land as close as possible to the nearest enemy village.
+static func _front_site(sim: Sim, c: Colony, type: String, sz: Vector2i) -> Vector2i:
+	var foe: Colony = null
+	var fd := 1e18
+	for e in sim.enemies_of(c.civ_id):
+		var d := Vector2(e.home).distance_squared_to(Vector2(c.home))
+		if d < fd:
+			fd = d
+			foe = e
+	if foe == null:
+		return Vector2i(-1, -1)
+	var dir := (Vector2(foe.home) - Vector2(c.home)).normalized()
+	for step in range(22, 4, -2):
+		var center := c.home + Vector2i(roundi(dir.x * step), roundi(dir.y * step))
+		for off in [Vector2i.ZERO, Vector2i(2, 0), Vector2i(-2, 0), Vector2i(0, 2), Vector2i(0, -2)]:
+			var t: Vector2i = center + off - Vector2i(sz.x / 2, sz.y / 2)
+			if sim.can_place(null, type, t) != "":
+				continue
+			var so := sim.states.owner_at(t)
+			if so != c.civ_id:
+				continue
+			if not _has_clearance(sim, t, sz):
+				continue
+			return t
+	return Vector2i(-1, -1)
