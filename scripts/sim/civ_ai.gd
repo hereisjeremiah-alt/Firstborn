@@ -296,6 +296,10 @@ static func next_building(sim: Sim, c: Colony) -> String:
 				if c.count_type(st) == 0:
 					return st
 				break
+	# bonus buildings: one of each once the tribe is settled, a second when it's big
+	for bt in ["shaman_circle", "great_hearth", "flint_works", "stone_calendar", "marketplace", "bathhouse", "academy", "iron_foundry"]:
+		if c.is_unlocked(bt) and pop >= 8 and c.count_type(bt) < (2 if pop >= 18 else 1):
+			return bt
 	if fires < 1 + pop / 10:
 		return "campfire"
 	if stores < 1 + pop / 12:
@@ -590,46 +594,219 @@ static func _zone_site(sim: Sim, c: Colony, type: String, sz: Vector2i) -> Vecto
 
 
 # ================================================================ roads
-const ROAD_SKIP := ["wall", "gate", "fence", "monolith"]
+const ROAD_SKIP := ["wall", "gate", "fence", "monolith", "farm"]
 
 
-## Every so often the tribe lays a road from a building that has none to the nearest road
-## (or to the main campfire), so its villages grow a street network on their own.
+## The tribe grows a street network the way a real village would: first a main street through
+## the camp (bending around buildings), then lanes from each building's door to the nearest
+## street, and later a highway to a nearby ally or trading partner. A new road is only planned
+## once the last one is built, so roads appear as whole streets instead of scattered bits.
 static func plan_roads(sim: Sim, c: Colony) -> void:
 	if sim.rng.randf() < 0.01:
 		c.road_tried.clear()        # look again now and then (roads get torn up, buildings move)
-	if c.population() < 2 or c.road_marks.size() > 10 or sim.rng.randf() > 0.25:
+	if not c.road_marks.is_empty():
+		# a plan nobody has worked on for a long while (blocked, out of reach) is dropped
+		if not c.is_player and sim.time.day() - c.road_plan_day > 25:
+			c.road_marks.clear()
 		return
+	if c.population() < 3 or sim.rng.randf() > 0.3:
+		return
+	c.road_plan_day = sim.time.day()
 	var hub := c.home + Vector2i(0, 2)
 	var fire := c.nearest_building(sim.world.center_of(c.home), "campfire")
 	if fire != null and fire.built:
 		hub = fire.tile + Vector2i(0, fire.size().y)
-	var blds: Array = []
-	for b in c.buildings:
-		if b.built and not ROAD_SKIP.has(b.type) and not c.road_tried.has(b.id):
-			blds.append(b)
-	if blds.is_empty():
+	var built: Array = c.buildings.filter(func(b): return b.built and not ROAD_SKIP.has(b.type))
+	if built.size() < 3:
 		return
-	blds.sort_custom(func(a, b): return Vector2(a.tile).distance_squared_to(Vector2(hub)) < Vector2(b.tile).distance_squared_to(Vector2(hub)))
-	for b in blds:
-		if _road_next_to(sim, b):
-			c.road_tried[b.id] = true
-			continue
-		if Vector2(b.center_tile()).distance_to(Vector2(hub)) < 2.5:
-			c.road_tried[b.id] = true
+	# 1) the main street: across the village through the hub, along whichever axis is longer
+	if not c.road_tried.has(-1):
+		c.road_tried[-1] = true
+		var lo := Vector2i(hub)
+		var hi := Vector2i(hub)
+		for b in built:
+			lo = Vector2i(mini(lo.x, b.tile.x), mini(lo.y, b.tile.y))
+			hi = Vector2i(maxi(hi.x, b.tile.x + b.size().x), maxi(hi.y, b.tile.y + b.size().y))
+		var a: Vector2i
+		var z: Vector2i
+		if hi.x - lo.x >= hi.y - lo.y:
+			a = Vector2i(lo.x - 2, hub.y)
+			z = Vector2i(hi.x + 2, hub.y)
+		else:
+			a = Vector2i(hub.x, lo.y - 2)
+			z = Vector2i(hub.x, hi.y + 2)
+		a = _road_free_near(sim, a)
+		z = _road_free_near(sim, z)
+		if a.x >= 0 and z.x >= 0:
+			var p1 := route(sim, c, a, {sim.world.idx(hub): true}, 30)
+			var p2 := route(sim, c, z, {sim.world.idx(hub): true}, 30)
+			var street: Array = p1.duplicate()
+			street.append_array(p2)
+			if sim.plan_road(c, street) > 0:
+				return
+	# 2) lanes: the nearest building without a road reaches the nearest street
+	built.sort_custom(func(x, y): return Vector2(x.tile).distance_squared_to(Vector2(hub)) < Vector2(y.tile).distance_squared_to(Vector2(hub)))
+	for b in built:
+		if c.road_tried.has(b.id):
 			continue
 		c.road_tried[b.id] = true
+		if _road_next_to(sim, b):
+			continue
 		var door := _door_tile(sim, b)
 		if door.x < 0:
 			continue
-		var target := _nearest_own_road(sim, c, door, 24)
-		if target.x < 0:
-			target = hub
-		var path := _best_l_path(sim, c, door, target)
-		if path.size() > 40 or path.is_empty():
-			continue
-		if sim.plan_road(c, path) > 0:
+		var goals := _road_goals(sim, c)
+		goals[sim.world.idx(hub)] = true
+		var lane := route(sim, c, door, goals, 24)
+		if not lane.is_empty() and sim.plan_road(c, lane) > 0:
 			return
+	# 3) a highway to the nearest ally or trading partner (once the tribe is settled)
+	if c.population() >= 10 and c.era_i >= 1:
+		var best: Colony = null
+		var bd := 75.0
+		for o in sim.colonies:
+			if o == c or o.collapsed or o.bandit or c.road_tried.has(-100 - o.civ_id):
+				continue
+			if not (Deals.allied(sim, c.civ_id, o.civ_id) or (sim.have_met(c.civ_id, o.civ_id) and sim.relation(c.civ_id, o.civ_id) > 10.0)):
+				continue
+			var d := Vector2(o.home).distance_to(Vector2(c.home))
+			if d < bd:
+				bd = d
+				best = o
+		if best != null:
+			c.road_tried[-100 - best.civ_id] = true
+			highway(sim, c, best)
+
+
+## Plans a road along the walking route between two villages, through land the tribe may build
+## on (its own, unclaimed, or an ally's). Allies help build the part in their land.
+static func highway(sim: Sim, c: Colony, o: Colony) -> int:
+	var to := sim.world.walkable_near(o.home + Vector2i(0, 3), 4)
+	if to.x < 0:
+		return 0
+	# start from the tribe's own road nearest the other village, so the highway grows out of a street
+	var from := sim.world.walkable_near(c.home + Vector2i(0, 3), 4)
+	var fd := 1e18
+	for i in sim.road_tiles.keys():
+		if int(sim.road_tiles[i]) != c.civ_id:
+			continue
+		var q := Vector2i(int(i) % sim.world.w, int(i) / sim.world.w)
+		var d := Vector2(q).distance_squared_to(Vector2(to))
+		if d < fd and sim.world.walkable(q):
+			fd = d
+			from = q
+	if from.x < 0:
+		return 0
+	var raw := sim.paths.find_path(from, to)
+	if raw.is_empty():
+		return 0
+	# walking paths step diagonally; a road needs side-by-side tiles, so fill in each corner
+	var path: Array = [from]
+	for q in raw:
+		var last: Vector2i = path[-1]
+		if q.x != last.x and q.y != last.y:
+			var c1 := Vector2i(q.x, last.y)
+			var c2 := Vector2i(last.x, q.y)
+			path.append(c1 if sim.road_ok(c1) or sim.world.road[sim.world.idx(c1)] != 0 else c2)
+		path.append(q)
+	var tiles: Array = []
+	for q in path:
+		var so := sim.states.owner_at(q)
+		if so >= 0 and so != c.civ_id and not Deals.allied(sim, c.civ_id, so):
+			break                    # stop where land they may not build on begins: no gaps
+		if sim.building_tiles.has(sim.world.idx(q)) and sim.building_at(q).type != "gate":
+			continue
+		tiles.append(q)
+	var n := sim.plan_road(c, tiles)
+	c.road_plan_day = sim.time.day()
+	if n > 0 and (c.civ_id == 0 or o.civ_id == 0 or sim.have_met(0, c.civ_id)):
+		if c.civ_id == 0 or o.civ_id == 0:
+			sim.emit_signal("event", "A road is being laid between your village and the %s." % (o.name if c.civ_id == 0 else c.name), "good")
+	return n
+
+
+## Every finished road tile of the tribe (and its allies): what a new lane may join.
+static func _road_goals(sim: Sim, c: Colony) -> Dictionary:
+	var goals := {}
+	for i in sim.road_tiles.keys():
+		var ow := int(sim.road_tiles[i])
+		if ow == c.civ_id or Deals.allied(sim, c.civ_id, ow):
+			goals[int(i)] = true
+	return goals
+
+
+static func _road_free_near(sim: Sim, q: Vector2i) -> Vector2i:
+	for r in range(0, 4):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				var t := q + Vector2i(dx, dy)
+				if sim.world.inb(t) and (sim.road_ok(t) or sim.world.road[sim.world.idx(t)] != 0):
+					return t
+	return Vector2i(-1, -1)
+
+
+## Cheapest connected route from `from` to any goal tile, within `radius` tiles: around
+## buildings, preferring flat land over bridges and following existing roads for free.
+## Returns only the tiles that still need a road.
+static func route(sim: Sim, c: Colony, from: Vector2i, goals: Dictionary, radius: int) -> Array:
+	var w := sim.world.w
+	var start := sim.world.idx(from)
+	if goals.has(start):
+		return []
+	var dist := {start: 0}
+	var prev := {}
+	var buckets: Array = [[start]]
+	var found := -1
+	var cur := 0
+	while cur < buckets.size():
+		var bucket: Array = buckets[cur]
+		if bucket.is_empty():
+			cur += 1
+			continue
+		var i: int = bucket.pop_back()
+		if int(dist.get(i, 1 << 30)) < cur:
+			continue
+		if goals.has(i):
+			found = i
+			break
+		var q := Vector2i(i % w, i / w)
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = q + d
+			if absi(n.x - from.x) > radius or absi(n.y - from.y) > radius or not sim.world.inb(n):
+				continue
+			var ni := sim.world.idx(n)
+			var step := 0
+			if sim.world.road[ni] != 0:
+				step = 1 if not goals.has(ni) else 0
+			elif goals.has(ni):
+				step = 1
+			elif sim.road_ok(n):
+				var so := sim.states.owner_at(n)
+				if so >= 0 and so != c.civ_id and not Deals.allied(sim, c.civ_id, so):
+					continue
+				step = 4 if sim.world.bridgeable(n) else 2
+				if sim.world.res_type[ni] != Defs.R.NONE:
+					step += 1        # trees in the way have to be cut first
+			else:
+				continue
+			var nd := cur + step
+			if nd < int(dist.get(ni, 1 << 30)):
+				dist[ni] = nd
+				prev[ni] = i
+				while buckets.size() <= nd:
+					buckets.append([])
+				buckets[nd].append(ni)
+	if found < 0:
+		return []
+	var out: Array = []
+	var k := found
+	if sim.world.road[k] == 0 and sim.road_ok(Vector2i(k % w, k / w)):
+		out.append(Vector2i(k % w, k / w))
+	while k != start:
+		k = int(prev[k])
+		if sim.world.road[k] == 0:
+			out.append(Vector2i(k % w, k / w))
+	return out
 
 
 static func _road_next_to(sim: Sim, b: Building) -> bool:
@@ -649,70 +826,6 @@ static func _door_tile(sim: Sim, b: Building) -> Vector2i:
 		if sim.road_ok(q):
 			return q
 	return Vector2i(-1, -1)
-
-
-static func _nearest_own_road(sim: Sim, c: Colony, from: Vector2i, r: int) -> Vector2i:
-	var best := Vector2i(-1, -1)
-	var best_d := 1e18
-	for i in sim.road_tiles.keys():
-		if int(sim.road_tiles[i]) != c.civ_id:
-			continue
-		var q := Vector2i(int(i) % sim.world.w, int(i) / sim.world.w)
-		if absi(q.x - from.x) > r or absi(q.y - from.y) > r:
-			continue
-		var d := Vector2(q).distance_squared_to(Vector2(from))
-		if d < best_d:
-			best_d = d
-			best = q
-	for i in c.road_marks.keys():
-		var q := Vector2i(int(i) % sim.world.w, int(i) / sim.world.w)
-		var d := Vector2(q).distance_squared_to(Vector2(from))
-		if d < best_d and d <= r * r:
-			best_d = d
-			best = q
-	return best
-
-
-## The L-shaped road (x first or y first) with fewer tiles in the way; tiles abroad are dropped.
-static func _best_l_path(sim: Sim, c: Colony, a: Vector2i, b: Vector2i) -> Array:
-	var best: Array = []
-	var best_bad := 1 << 30
-	for xfirst in [true, false]:
-		var tiles: Array = []
-		var sx := 1 if b.x >= a.x else -1
-		var sy := 1 if b.y >= a.y else -1
-		if xfirst:
-			for x in range(a.x, b.x + sx, sx):
-				tiles.append(Vector2i(x, a.y))
-			for y in range(a.y + sy, b.y + sy, sy):
-				tiles.append(Vector2i(b.x, y))
-		else:
-			for y in range(a.y, b.y + sy, sy):
-				tiles.append(Vector2i(a.x, y))
-			for x in range(a.x + sx, b.x + sx, sx):
-				tiles.append(Vector2i(x, b.y))
-		var bad := 0
-		var keep: Array = []
-		for q in tiles:
-			if not sim.world.inb(q):
-				bad += 5
-				continue
-			var i := sim.world.idx(q)
-			var so := sim.states.owner_at(q)
-			if so >= 0 and so != c.civ_id:
-				bad += 3
-				continue
-			if sim.building_tiles.has(i):
-				bad += 2
-				continue
-			if sim.world.bridgeable(q):
-				bad += 1        # bridges cost wood: prefer land
-			if sim.world.road[i] == 0:
-				keep.append(q)
-		if bad < best_bad:
-			best_bad = bad
-			best = keep
-	return best
 
 
 ## At war, tribes send Billies to tear up the enemy's roads near their own land.

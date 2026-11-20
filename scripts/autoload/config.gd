@@ -46,6 +46,9 @@ const RULES := [
 	["bandit_camps", "Bandit camps", 0.0, 10.0, 1.0, 3.0, "d", "World", "Outlaw camps placed in the wilds at the start of a new game. Bandits rob villages and ambush traders."],
 	["trespass_war", "War chance when caught trespassing", 0.0, 1.0, 0.05, 0.3, "%", "World", "Chance a tribe goes to war when it catches a foreign Billy on its land without permission. +10% for every age after the Caveman Age."],
 	["defect_below", "Unhappiness that splits a tribe", 0.0, 0.6, 0.05, 0.2, "%", "World", "When a tribe's political happiness falls below this, a group of its people may leave."],
+	["trade_range", "Trading distance (tiles)", 30.0, 500.0, 10.0, 160.0, "", "World", "How far traders will walk or sail to another tribe, home to home."],
+	["wagon_trade_bonus", "Extra distance with Trade Wagons", 0.0, 500.0, 10.0, 120.0, "", "World", "How much further traders reach once Trade Wagons (Stone Age) are researched."],
+	["civil_war_chance", "Yearly chance of civil war", 0.0, 1.0, 0.05, 0.3, "%", "World", "When half or more of a tribe's adults dislike their leader, the chance each calendar year that the tribe splits in a civil war."],
 	["defect_chance", "Yearly chance of a split", 0.0, 1.0, 0.05, 0.4, "%", "World", "Chance each calendar year that an unhappy tribe splits: a group leaves to join another tribe (if allowed) or to found their own."],
 	["election_years", "Years between elections", 1.0, 30.0, 1.0, 4.0, "d", "World", "Calendar years a Chief or President serves before the next election."],
 ]

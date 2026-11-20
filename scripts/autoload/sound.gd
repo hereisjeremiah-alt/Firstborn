@@ -1,5 +1,5 @@
 extends Node
-## Music and UI sounds. Twenty soundtrack pieces play in a shuffled order and crossfade smoothly
+## Music and UI sounds. Thirty soundtrack pieces play in a shuffled order and crossfade smoothly
 ## into each other. Every button in the game gets a clean click automatically.
 
 const MUSIC_BUS := "Music"
@@ -26,6 +26,16 @@ const TRACKS := [
 	["res://audio/music/18_war_horns.ogg", "War Horns"],
 	["res://audio/music/19_the_long_road.ogg", "The Long Road"],
 	["res://audio/music/20_riverstone.ogg", "Riverstone"],
+	["res://audio/music/21_drums_of_the_host.ogg", "Drums of the Host"],
+	["res://audio/music/22_the_chiefs_return.ogg", "The Chief's Return"],
+	["res://audio/music/23_shield_wall.ogg", "Shield Wall"],
+	["res://audio/music/24_copper_crown.ogg", "Copper Crown"],
+	["res://audio/music/25_march_to_the_sea.ogg", "March to the Sea"],
+	["res://audio/music/26_iron_vanguard.ogg", "Iron Vanguard"],
+	["res://audio/music/27_standard_bearers.ogg", "Standard Bearers"],
+	["res://audio/music/28_victory_feast.ogg", "Victory Feast"],
+	["res://audio/music/29_border_watch.ogg", "Border Watch"],
+	["res://audio/music/30_the_last_legion.ogg", "The Last Legion"],
 ]
 
 var _players: Array = []      # two AudioStreamPlayers for crossfading

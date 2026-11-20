@@ -35,6 +35,7 @@ var trade_orders: Array = [] # the player's trade orders, carried out by traders
 var zones := {}              # tile index -> zone (Defs.ZONES)
 var wreck_marks := {}        # tile index -> true: enemy roads to tear up (at war)
 var auto_roads := true       # the tribe lays its own roads between its buildings
+var road_plan_day := 0       # sim day the current road plan was made (AI drops stuck plans)
 var road_tried := {}         # building id -> true: already given a road (not saved)
 var road_marks := {}         # tile index -> true: roads the player has laid out, still to be built
 var backed_id := -1          # the candidate the player backs at the next election
@@ -54,6 +55,10 @@ var last_election := {}
 var now_years := 0.0         # current calendar year (kept up to date by Sim)
 var auto_convert := true     # researchers turn KP into RP automatically
 var auto_research := true    # ... and spend it on the cheapest available tech
+var exile_asked := {}        # person id -> true: the tribe already raised sending them away
+var exile_sorrow := 0.0      # days the tribe is still sad about someone it sent away
+var dislike_share := 0.0     # share of adults who want the leader gone (civil war at 50%+)
+var civil_war_after := 0.0   # calendar year before which no new civil war breaks out
 var auto_advance := false    # move on to the next age as soon as it's paid for
 var auto_expand := true      # send people to claim free neighbouring states
 var cheat := false           # cheat mode: free, instant building and everything unlocked
@@ -94,6 +99,14 @@ func unregister(p: Human) -> void:
 
 func person(pid: int) -> Human:
 	return _by_id.get(pid, null)
+
+
+func adults_count() -> int:
+	var n := 0
+	for p in people:
+		if p.alive and p.age_years() >= 16.0:
+			n += 1
+	return n
 
 
 func living() -> Array:
@@ -300,10 +313,10 @@ func bonus(key: String) -> float:
 	var seen := {}
 	for b in buildings:
 		if b.built:
-			if once:
-				if seen.has(b.type):
-					continue          # war structures count once each, however many you build
-				seen[b.type] = true
+			var cap := 1 if once else int(b.def().get("max", 99))
+			if int(seen.get(b.type, 0)) >= cap:
+				continue          # war structures count once each, bonus buildings at most twice
+			seen[b.type] = int(seen.get(b.type, 0)) + 1
 			v += float(b.def().get(key, 0.0)) * (1.25 if b.zoned else 1.0)
 	if government != "":
 		var gfx: Dictionary = Defs.GOVERNMENTS[government]["fx"]
@@ -578,7 +591,7 @@ func to_dict() -> Dictionary:
 		"race": race, "flag": FlagArt.to_save(flag), "gov": government, "gov_pending": gov_pending, "clear": clear_marks.keys(),
 		"wall_ring": wall_ring, "wall_tier": wall_tier, "weapon_orders": weapon_orders.duplicate(),
 		"era_start": era_start_year, "bonus_years": bonus_years, "auto_convert": auto_convert, "auto_research": auto_research,
-		"auto_expand": auto_expand, "auto_advance": auto_advance, "cheat": cheat,
+		"auto_expand": auto_expand, "auto_advance": auto_advance, "civil_after": civil_war_after, "cheat": cheat,
 		"leader": leader_id, "leader_title": leader_title, "leader_terms": leader_terms, "leader_fx": leader_fx.duplicate(),
 		"next_election": next_election, "last_election": last_election.duplicate(true),
 		"zones_i": zones.keys(), "zones_v": zones.values(), "roads": road_marks.keys(), "wreck": wreck_marks.keys(), "auto_roads": auto_roads, "backed": backed_id,
@@ -632,6 +645,7 @@ func from_dict(d: Dictionary) -> void:
 	auto_research = bool(d.get("auto_research", false))
 	auto_expand = bool(d.get("auto_expand", civ_id != 0))
 	auto_advance = bool(d.get("auto_advance", false))
+	civil_war_after = float(d.get("civil_after", 0.0))
 	cheat = bool(d.get("cheat", false))
 	leader_id = int(d.get("leader", -1))
 	leader_title = str(d.get("leader_title", ""))

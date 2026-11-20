@@ -142,7 +142,7 @@ static func _choose_task(sim: Sim, p: Human) -> void:
 	if p.is_adult() and not sim.col_of(p).wreck_marks.is_empty() and not p.job in ["researcher", "healer", "trader", "cook"] \
 			and sim.rng.randf() < 0.5 and _plan_wreck(sim, p):
 		return
-	if p.is_adult() and not sim.col_of(p).road_marks.is_empty() and p.job in ["laborer", "builder", "gatherer", "woodcutter"] \
+	if p.is_adult() and _has_road_work(sim, sim.col_of(p)) and p.job in ["laborer", "builder", "gatherer", "woodcutter"] \
 			and sim.rng.randf() < 0.6 and _plan_road(sim, p):
 		return
 	if p.is_adult() and p.job != "researcher" and sim.rng.randf() < 0.25 and _plan_research(sim, p, true):
@@ -1411,7 +1411,7 @@ static func _plan_trade(sim: Sim, p: Human) -> bool:
 			best = o
 	p.carrying = pack
 	p.task_memory["trade_civ"] = best.civ_id
-	p.task_memory["trade_until"] = sim.time.t + 4.0
+	p.task_memory["trade_until"] = sim.time.t + maxf(4.0, Trade.max_range(c) / 30.0)
 	if _start_trade_trip(sim, p, c, best):
 		p.task_memory["next_trade"] = sim.time.t + 0.5
 		return true
@@ -1692,46 +1692,85 @@ static func _do_saw(sim: Sim, p: Human, dt: float) -> void:
 
 
 # ================================================================ roads
-## Builders and laborers lay the roads the player planned (nearest first, once the tile is clear).
+## Road plans this tribe's Billies may work on: their own, plus an ally's plans that run
+## through this tribe's land (allies build shared roads together).
+static func _road_plans(sim: Sim, c: Colony) -> Array:
+	var out: Array = [c]
+	for a in Deals.allies_of(sim, c.civ_id):
+		if not a.road_marks.is_empty():
+			out.append(a)
+	return out
+
+
+static func _has_road_work(sim: Sim, c: Colony) -> bool:
+	if not c.road_marks.is_empty():
+		return true
+	for a in Deals.allies_of(sim, c.civ_id):
+		if not a.road_marks.is_empty():
+			return true
+	return false
+
+
+## Builders and laborers lay planned roads (nearest first, once the tile is clear): their own
+## tribe's, and an ally's where it crosses their land.
 static func _plan_road(sim: Sim, p: Human) -> bool:
 	var c := sim.col_of(p)
 	var here := sim.world.tile_of(p.pos)
 	var best := Vector2i(-1, -1)
 	var best_stand := Vector2i(-1, -1)
+	var best_owner: Colony = null
 	var best_d := 1e18
-	var drop: Array = []
 	var wood_ok := c.count("wood") >= Defs.BRIDGE_WOOD
-	for i in c.road_marks.keys():
-		var ii := int(i)
-		var q := Vector2i(ii % sim.world.w, ii / sim.world.w)
-		if sim.world.road[ii] != 0 or sim.building_tiles.has(ii):
-			drop.append(i)
-			continue
-		if sim.world.res_type[ii] != Defs.R.NONE or sim.claims.has(ii):
-			continue          # still to be cleared, or someone is on it
-		var stand := q
-		if sim.world.bridgeable(q):
-			# bridges are built plank by plank from the shore (or from the bridge so far)
-			if not wood_ok:
+	for pc in _road_plans(sim, c):
+		var plan: Colony = pc
+		var drop: Array = []
+		for i in plan.road_marks.keys():
+			var ii := int(i)
+			var q := Vector2i(ii % sim.world.w, ii / sim.world.w)
+			if sim.world.road[ii] != 0 or sim.building_tiles.has(ii):
+				drop.append(i)
 				continue
-			stand = Vector2i(-1, -1)
-			for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-				if sim.world.walkable(q + dd):
-					stand = q + dd
+			if plan != c and sim.states.owner_at(q) != c.civ_id:
+				continue          # allies only help with the part in their own land
+			if sim.world.res_type[ii] != Defs.R.NONE or sim.claims.has(ii):
+				if plan != c and sim.world.res_type[ii] != Defs.R.NONE:
+					c.clear_marks[ii] = true      # clear the ally's road through our land
+				continue          # still to be cleared, or someone is on it
+			var stand := q
+			if sim.world.bridgeable(q):
+				# bridges are built plank by plank from the shore (or from the bridge so far)
+				if not wood_ok:
+					continue
+				stand = Vector2i(-1, -1)
+				for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					if sim.world.walkable(q + dd):
+						stand = q + dd
+						break
+				if stand.x < 0:
+					continue
+			var d := Vector2(q).distance_squared_to(Vector2(here))
+			if plan != c:
+				d *= 1.5          # own roads first
+			# roads grow outward from roads already laid, so they come out as whole streets
+			for dd2 in [1, -1, sim.world.w, -sim.world.w]:
+				var ni2: int = ii + dd2
+				if ni2 >= 0 and ni2 < sim.world.road.size() and sim.world.road[ni2] != 0:
+					d = d * 0.15 - 4.0
 					break
-			if stand.x < 0:
-				continue
-		var d := Vector2(q).distance_squared_to(Vector2(here))
-		if d < best_d:
-			best_d = d
-			best = q
-			best_stand = stand
-	for i in drop:
-		c.road_marks.erase(i)
+			if d < best_d:
+				best_d = d
+				best = q
+				best_stand = stand
+				best_owner = plan
+		for i in drop:
+			plan.road_marks.erase(i)
 	if best.x < 0:
 		return false
 	var bridge := sim.world.bridgeable(best)
-	if _set_task(sim, p, "road", best_stand, PRIO_JOB + 2, {"tile": best, "label": "Building a bridge" if bridge else "Laying a road"}):
+	var label := "Building a bridge" if bridge else "Laying a road"
+	if best_owner != c:
+		label += " with the %s" % best_owner.name
+	if _set_task(sim, p, "road", best_stand, PRIO_JOB + 2, {"tile": best, "plan_civ": best_owner.civ_id, "label": label}):
 		sim.claim(best, p.id)
 		return true
 	return false
@@ -1742,7 +1781,8 @@ static func _do_road(sim: Sim, p: Human, dt: float) -> void:
 	var tile: Vector2i = t["tile"]
 	var i := sim.world.idx(tile)
 	var c := sim.col_of(p)
-	if not c.road_marks.has(i) or sim.world.res_type[i] != Defs.R.NONE:
+	var plan := sim.civ(int(t.get("plan_civ", c.civ_id)))
+	if not plan.road_marks.has(i) or sim.world.res_type[i] != Defs.R.NONE:
 		sim.claims.erase(i)
 		_done(sim, p)
 		return
@@ -1756,9 +1796,13 @@ static func _do_road(sim: Sim, p: Human, dt: float) -> void:
 			_done(sim, p)
 			return
 		c.take("wood", Defs.BRIDGE_WOOD)
-	sim.lay_road(c, i)
+	sim.lay_road(plan, i)
 	sim.claims.erase(i)
 	p.gain_skill("builder", 0.01)
+	if plan != c:
+		sim.shared_road_tiles += 1
+	if plan != c and sim.rng.randf() < 0.02:
+		sim.relations[sim._key(c.civ_id, plan.civ_id)] = minf(100.0, sim.relation(c.civ_id, plan.civ_id) + 1.0)
 	# keep going along the road while there is more to lay nearby
 	if not _plan_road(sim, p):
 		_done(sim, p)

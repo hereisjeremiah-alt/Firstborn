@@ -52,6 +52,7 @@ var access_denied := {}         # "a>b" -> calendar year before which a won't as
 var access_asks: Array = []     # AI tribes waiting for the player's answer on passage
 var trespass_cd := {}           # "a>b" -> sim time of the next possible incident roll
 var fog := Fog.new()
+var exile_asks: Array = []      # [{"pid"}]: badly sick people your tribe asks to send away (Quarantine)
 var defect_asks: Array = []     # groups from other tribes asking to join the player (Politics)
 var alliances := {}             # "a:b" -> calendar year the alliance was made
 var deal_offers: Array = []     # offers from AI tribes waiting for the player (Deals)
@@ -60,6 +61,7 @@ var play_secs := 0.0            # real seconds played while unpaused (diplomacy 
 var diplo_cd := {}              # "a>b:kind" -> play_secs when that request may be made again
 var stumps := {}                # tile index -> [tree type, sim day felled]: trees that will grow back
 var road_tiles := {}            # tile index -> civ id of the tribe that built it
+var shared_road_tiles := 0      # road tiles allies laid for each other (tests)
 var road_version := 0           # bumped whenever a road is laid or taken up (maps redraw)
 var history: Array = []         # [date text, text, kind]: the world history (pause menu)
 var fx: Array = []              # combat visuals waiting to be drawn (see Fx)
@@ -665,6 +667,8 @@ func trade_partners(c: Colony) -> Array:
 			continue
 		if have_met(c.civ_id, o.civ_id) and relation(c.civ_id, o.civ_id) <= -40.0:
 			continue
+		if not Trade.in_range(c, o):
+			continue
 		if land_reachable(c, o) or (c.has_built("harbor") and _nearest_sea(o.home, 20).x >= 0):
 			out.append(o)
 	return out
@@ -880,6 +884,8 @@ func release_claims(pid: int) -> void:
 ## "" if `type` can be placed at `t`. Pass a colony to also check that it can afford it.
 func can_place(c: Colony, type: String, t: Vector2i) -> String:
 	var d: Dictionary = Defs.BUILDINGS[type]
+	if c != null and d.has("max") and c.count_type(type) >= int(d["max"]):
+		return "You already have %d — their bonus only counts twice." % int(d["max"])
 	var s: Vector2i = d["size"]
 	for y in s.y:
 		for x in s.x:
@@ -1019,7 +1025,8 @@ func plan_road(c: Colony, tiles: Array) -> int:
 
 
 func lay_road(c: Colony, i: int) -> void:
-	c.road_marks.erase(i)
+	if c.road_marks.erase(i):
+		c.road_plan_day = time.day()       # the plan is moving along
 	if world.road[i] != 0:
 		return
 	var q := Vector2i(i % world.w, i / world.w)
@@ -1689,6 +1696,30 @@ func give_birth(mother: Human) -> void:
 	notify(c.civ_id, "%s gave birth to a %s named %s!" % [mother.name, "boy" if g == "M" else "girl", baby.name], "good")
 
 
+## A living person leaves the world for good without dying (sent away from their tribe).
+func remove_person(p: Human, why: String) -> void:
+	if not p.alive:
+		return
+	var c := col_of(p)
+	release_claims(p.id)
+	if p.bed_id >= 0:
+		var b := building(p.bed_id)
+		if b != null:
+			b.occupants.erase(p.id)
+	var partner := person(p.partner_id)
+	if partner != null:
+		partner.partner_id = -1
+	p.partner_id = -1
+	p.alive = false
+	p.cause = why
+	p.task = {}
+	p.path = []
+	c.unregister(p)
+	people_all.erase(p)
+	people_by_id.erase(p.id)
+	c.invalidate_bonus()
+
+
 func kill(p: Human, cause: String) -> void:
 	if not p.alive:
 		return
@@ -1754,7 +1785,7 @@ func to_dict() -> Dictionary:
 		"next_id": next_id, "next_animal_id": next_animal_id, "next_bid": next_bid,
 		"ships": ships.map(func(sh): return sh.to_dict()), "next_ship_id": next_ship_id,
 		"used_names": used_names.keys(), "rng": rng.state, "last_day": _last_day,
-		"defect_asks": defect_asks.duplicate(true), "borders": Borders.to_dict(self), "play_secs": play_secs, "diplo_cd": diplo_cd.duplicate(), "roads": road_tiles.keys(), "road_civ": road_tiles.values(), "history": history.duplicate(true), "stumps_i": stumps.keys(), "stumps_v": stumps.values(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
+		"defect_asks": defect_asks.duplicate(true), "exile_asks": exile_asks.duplicate(true), "borders": Borders.to_dict(self), "play_secs": play_secs, "diplo_cd": diplo_cd.duplicate(), "roads": road_tiles.keys(), "road_civ": road_tiles.values(), "history": history.duplicate(true), "stumps_i": stumps.keys(), "stumps_v": stumps.values(), "deals": Deals.to_dict(self), "fog": fog.to_save(),
 	}
 
 
@@ -1789,6 +1820,7 @@ func from_dict(d: Dictionary) -> void:
 	Borders.from_dict(self, d.get("borders", {}))
 	Deals.from_dict(self, d.get("deals", {}))
 	defect_asks = d.get("defect_asks", [])
+	exile_asks = d.get("exile_asks", [])
 	name_rng.randomize()
 	animals.clear()
 	for ad in d["animals"]:

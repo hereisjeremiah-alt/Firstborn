@@ -921,6 +921,123 @@ func _lumber_test(i: int) -> void:
 			sim.stumps.size(), int(c.count("log")), str(sim.world.res_type[int(_nt.get("road_stump", 0))] != Defs.R.NONE)])
 
 
+## Round F: road networks, allied road building, splits, civil war, sending the sick away,
+## bonus buildings, trade range: `-- --autotest --ftest`
+var _ft := {}
+func _road_parts(civ_id: int) -> Array:
+	# number of separate road pieces a tribe has, and its tile count
+	var tiles := {}
+	for k in sim.road_tiles.keys():
+		if int(sim.road_tiles[k]) == civ_id:
+			tiles[int(k)] = true
+	var seen := {}
+	var parts := 0
+	for k in tiles.keys():
+		if seen.has(k):
+			continue
+		parts += 1
+		var stack: Array = [k]
+		seen[k] = true
+		while not stack.is_empty():
+			var t: int = stack.pop_back()
+			for d in [1, -1, sim.world.w, -sim.world.w]:
+				var n: int = t + d
+				if tiles.has(n) and not seen.has(n):
+					seen[n] = true
+					stack.append(n)
+	return [parts, tiles.size()]
+
+
+func _f_test(i: int) -> void:
+	var c := sim.colony
+	if i == 2:
+		var o: Colony = null
+		var bd := 1e9
+		for oc in sim.colonies:
+			if oc.civ_id != 0 and not oc.bandit and not oc.collapsed and sim.land_reachable(c, oc) and Vector2(oc.home).distance_to(Vector2(c.home)) < bd:
+				bd = Vector2(oc.home).distance_to(Vector2(c.home))
+				o = oc
+		_ft["o"] = o.civ_id
+		print("FT trade range ", Trade.max_range(c), " dist to nearest ", int(bd), " problem='", Trade.problem(sim, o.civ_id), "'")
+		c.researched["pack_carts"] = true
+		print("FT with wagons ", Trade.max_range(c))
+		# bonus buildings: two count, a third is refused
+		c.researched["spirit_lore"] = true
+		c.add("wood", 500)
+		c.add("stone", 500)
+		c.add("bones", 100)
+		c.add("hides", 100)
+		var h0 := c.bonus("heal")
+		for k in 3:
+			var site := CivAI.find_site(sim, c, "shaman_circle")
+			var why := sim.can_place(c, "shaman_circle", site)
+			var b := sim.place_building(c, "shaman_circle", site) if why == "" else null
+			if b != null:
+				sim.finish_building(b)
+			print("FT shaman circle #", k + 1, " placed=", b != null, " why='", why, "'")
+		c.invalidate_bonus()
+		print("FT heal bonus ", h0, " -> ", c.bonus("heal"))
+		# alliance and a shared road
+		sim.contacts[sim._key(0, o.civ_id)] = true
+		Deals.make_alliance(sim, 0, o.civ_id)
+		var n := CivAI.highway(sim, o, c)
+		var n2 := CivAI.highway(sim, c, o)
+		print("FT our highway to the ally: ", n2, " tiles, in their land: ", c.road_marks.keys().filter(func(k): return sim.states.owner_at(Vector2i(int(k) % sim.world.w, int(k) / sim.world.w)) == o.civ_id).size())
+		print("FT highway planned by ", o.name, ": ", n, " tiles, in our land: ", o.road_marks.keys().filter(func(k): return sim.states.owner_at(Vector2i(int(k) % sim.world.w, int(k) / sim.world.w)) == 0).size())
+		# splits need a man and a woman
+		for k in 8:
+			sim._make_human(o, "M" if k < 7 else "F", (20.0 + k) * Defs.AGE_YEAR_DAYS, sim.world.center_of(o.home) + Vector2(k * 4, 6))
+		var g := Politics.pick_group(sim, o.living().filter(func(q): return q.is_adult()), 4)
+		print("FT split group genders: ", g.map(func(q): return q.gender))
+		var men_only := o.living().filter(func(q): return q.is_adult() and q.gender == "M")
+		print("FT men-only group: ", Politics.pick_group(sim, men_only, 4).size())
+		# civil war in another tribe
+		var cw: Colony = null
+		for oc in sim.colonies:
+			if oc.civ_id != 0 and oc != o and not oc.bandit and not oc.collapsed:
+				cw = oc
+				break
+		if cw != null:
+			for k in 10:
+				sim._make_human(cw, "M" if k % 2 == 0 else "F", (20.0 + k * 2) * Defs.AGE_YEAR_DAYS, sim.world.center_of(cw.home) + Vector2(k * 4, 6))
+			Elections.hold(sim, cw, "test")
+			cw.approval = 5.0
+			var before := sim.colonies.size()
+			print("FT dislike share ", cw.name, " = ", Politics.dislike_share(sim, cw), " states=", sim.states.owned_by(cw.civ_id).size())
+			Politics.civil_war(sim, cw)
+			if sim.colonies.size() > before:
+				var nw: Colony = sim.colonies[-1]
+				print("FT civil war: ", cw.name, " pop ", cw.population(), " vs rebels ", nw.name, " pop ", nw.population(), " at_war=", sim.at_war(cw.civ_id, nw.civ_id), " rebel states=", sim.states.owned_by(nw.civ_id).size(), " rebel buildings=", nw.buildings.size())
+			else:
+				print("FT civil war did not start")
+		# a badly sick person with something catching
+		for k in 3:
+			sim._make_human(c, "M" if k % 2 == 0 else "F", (22.0 + k) * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2(k * 4, 6))
+		var sick: Human = c.living()[0]
+		Survival.infect(sim, sick, "plague", "test", true)
+		sick.health = 30.0
+		for k in 30:
+			Quarantine.hourly(sim, c)
+		print("FT sick ", sick.name, " alive=", sick.alive, " cause=", sick.cause, " in tribe=", c.person(sick.id) != null, " sorrow=", c.exile_sorrow)
+	if i >= 4 and i % 4 == 0:
+		var line := "FT t%d roads:" % i
+		for oc in sim.colonies:
+			if oc.collapsed or oc.bandit:
+				continue
+			var rp := _road_parts(oc.civ_id)
+			line += " %s=%d tiles/%d pieces" % [oc.name.substr(0, 8), rp[1], rp[0]]
+		var helpers := 0
+		for q in c.living():
+			if str(q.state).contains(" with the "):
+				helpers += 1
+		var o2 := sim.civ(int(_ft.get("o", 1)))
+		var theirs := 0
+		for q in o2.living():
+			if str(q.state).contains(" with the "):
+				theirs += 1
+		print(line, " | ally marks=", o2.road_marks.size(), " our helpers=", helpers, " their helpers=", theirs, " our marks=", c.road_marks.size(), " shared tiles laid=", sim.shared_road_tiles)
+
+
 ## Round E: AI roads, road wrecking, war structures, chronic conditions, sleeping indoors,
 ## planner undo/redo, world history: `-- --autotest --etest`
 var _et := {}
@@ -1440,6 +1557,8 @@ func _autotest() -> void:
 			_lumber_test(i)
 		if _args.has("--etest"):
 			_e_test(i)
+		if _args.has("--ftest"):
+			_f_test(i)
 		if _args.has("--raidtest") and i == 2:
 			_raid_setup()
 		if _args.has("--raidtest") and i > 2:
@@ -1910,6 +2029,39 @@ func _military_shots(dir: String) -> void:
 	c.invalidate_bonus()
 	camera.position = sim.world.center_of(wpos + Vector2i(wx / 2, 2))
 	await _snap(dir + "/34_war_structures.png", 2.2)
+	# --- bonus buildings of every age
+	var bpos := wpos + Vector2i(0, 7)
+	for yy in range(-1, 6):
+		for xx in range(-1, 34):
+			var q2 := bpos + Vector2i(xx, yy)
+			if sim.world.inb(q2):
+				var qi2 := sim.world.idx(q2)
+				if sim.world.res_type[qi2] != Defs.R.NONE:
+					sim.world.res_type[qi2] = Defs.R.NONE
+					_on_tile_changed(q2)
+	var bx := 0
+	for t in ["shaman_circle", "great_hearth", "flint_works", "stone_calendar", "marketplace", "bathhouse", "academy", "iron_foundry"]:
+		c.researched[str(Defs.BUILDINGS[t]["tech"])] = true
+		var pb: Building = null
+		for dy in range(0, 3):
+			for dx in range(0, 3):
+				if pb == null and sim.can_place(c, t, bpos + Vector2i(bx + dx, dy)) == "":
+					pb = sim.place_building(c, t, bpos + Vector2i(bx + dx, dy))
+		if pb != null:
+			sim.finish_building(pb)
+			bx += pb.size().x + 1
+	camera.position = sim.world.center_of(bpos + Vector2i(bx / 2, 1))
+	await _snap(dir + "/42_bonus_buildings.png", 2.0)
+	# --- the tribe asks to send a sick person away
+	var sp: Human = c.living()[0]
+	Survival.infect(sim, sp, "plague", "rats", true)
+	sp.health = 30.0
+	sim.exile_asks.append({"pid": sp.id})
+	hud._refresh_exile()
+	camera.position = sp.pos
+	await _snap(dir + "/43_exile.png", 1.6)
+	sim.exile_asks.clear()
+	hud._refresh_exile()
 	# --- research tree header
 	hud.toggle_research()
 	await _snap(dir + "/37_research.png", 1.0)

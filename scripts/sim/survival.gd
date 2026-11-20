@@ -249,6 +249,7 @@ static func pct_text(r: float) -> String:
 # ---------------------------------------------------------------- periodic
 static func hourly(sim: Sim, c: Colony) -> void:
 	Conditions.hourly(sim, c)
+	Quarantine.hourly(sim, c)
 	var people := c.living()
 	var freq := Config.rule("illness_freq")
 	for p in people:

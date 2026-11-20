@@ -21,6 +21,20 @@ static func has_wagon(c: Colony) -> bool:
 	return c.researched.has("pack_carts") or c.cheat
 
 
+## How far (in tiles, home to home) this tribe's traders will go. Trade Wagons reach further.
+## Both distances are world settings (Game Rules → Trade).
+static func max_range(c: Colony) -> float:
+	return Config.rule("trade_range") + (Config.rule("wagon_trade_bonus") if has_wagon(c) else 0.0)
+
+
+static func distance(a: Colony, b: Colony) -> float:
+	return Vector2(a.home).distance_to(Vector2(b.home))
+
+
+static func in_range(a: Colony, b: Colony) -> bool:
+	return distance(a, b) <= max_range(a)
+
+
 ## "" if the player can trade with this tribe at all.
 static func problem(sim: Sim, cid: int) -> String:
 	var o := sim.civ(cid)
@@ -34,6 +48,9 @@ static func problem(sim: Sim, cid: int) -> String:
 		return "They're too hostile to trade."
 	if not sim.land_reachable(sim.colony, o) and not sim.colony.has_built("harbor"):
 		return "You can't reach them over land (build a Harbor)."
+	if not in_range(sim.colony, o):
+		var more := "" if has_wagon(sim.colony) else " Trade Wagons (Stone Age) let them go %d tiles further." % int(Config.rule("wagon_trade_bonus"))
+		return "They're too far away: %d tiles, and your traders go at most %d.%s" % [int(distance(sim.colony, o)), int(max_range(sim.colony)), more]
 	return ""
 
 
@@ -266,7 +283,7 @@ static func plan_trip(sim: Sim, p: Human) -> bool:
 	p.task_memory["trip_buy"] = trip_buy
 	p.task_memory["trip_people"] = trip_people
 	p.task_memory["trade_civ"] = partner.civ_id
-	p.task_memory["trade_until"] = sim.time.t + 6.0
+	p.task_memory["trade_until"] = sim.time.t + maxf(6.0, max_range(c) / 30.0)
 	if HumanAI._start_trade_trip(sim, p, c, partner):
 		return true
 	# couldn't set off: put everything back

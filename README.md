@@ -450,3 +450,14 @@ Tuning lives almost entirely in `scripts/world/defs.gd`. That includes day lengt
   Lookouts and towers shoot enemies and predators; drums, rams and siege engines boost soldiers or hurl boulders at enemy buildings.
 - **Long illnesses**: Dementia (45+, worse with age, forgets tasks, harmful from 70), Obesity (makes diabetes 25% likelier), Type 2 Diabetes.
 - **Music**: 10 new pieces (20 in all), including brass marches (*March of the Tribe*, *Bronze Legion*, *War Horns*), still shuffled. A chime plays when you research a tech by hand.
+
+## Round F additions
+
+- **Music**: 10 more pieces (30 in all), mostly marches and brass: *Drums of the Host*, *The Chief's Return*, *Shield Wall*, *Copper Crown*, *March to the Sea*, *Iron Vanguard*, *Standard Bearers*, *Victory Feast*, *Border Watch*, *The Last Legion*.
+- **Road networks**: tribes lay a main street through the village (bending around buildings), then lanes from each building's door to the nearest street, then a highway to a nearby ally or friendly tribe. Billies build roads outward from roads already laid, so streets appear whole. Stuck plans are dropped.
+- **Allied roads**: allies help build each other's planned roads where they cross their own land.
+- **Splits**: a group that breaks away always includes at least one man and one woman (couples stay together).
+- **Civil war**: when half or more of a tribe's adults dislike their leader, the tribe may split (Game Rules: yearly chance). Rebels take the far half of the land and its buildings and go to war with the loyalists. The Colony panel shows the share against the leader.
+- **Sending the sick away**: your tribe asks whether a badly sick, contagious person should be sent away. AI tribes decide themselves.
+- **Bonus buildings** (2 per age, expensive, each kind counts at most twice): Shaman's Circle, Great Hearth, Flint Works, Stone Calendar, Marketplace, Bathhouse, Academy, Iron Foundry.
+- **Trading distance**: World settings *Trading distance* (default 160 tiles) and *Extra distance with Trade Wagons* (default +120).

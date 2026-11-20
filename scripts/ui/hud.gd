@@ -74,6 +74,7 @@ func setup(g: Node) -> void:
 	_build_settings_layer()
 	_build_fps()
 	_build_passage_dialog()
+	_build_exile_dialog()
 	_build_trade_window()
 	_build_jobs_window()
 	_build_deal_card()
@@ -88,6 +89,77 @@ var passage_label: Label
 var passage_civ := -1
 var passage_yes: Button
 var passage_defect := false     # showing a group that wants to join (Politics) instead of a passage request
+
+
+# ---------------------------------------------------------------- sending the sick away
+var exile_panel: PanelContainer
+var exile_label: Label
+var exile_pid := -1
+
+
+func _build_exile_dialog() -> void:
+	exile_panel = PanelContainer.new()
+	exile_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	exile_panel.offset_top = 170
+	exile_panel.offset_left = -240
+	exile_panel.offset_right = 240
+	exile_panel.visible = false
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(0.12, 0.08, 0.07, 0.96)
+	st.border_color = Color(0.85, 0.45, 0.35)
+	st.set_border_width_all(2)
+	st.set_corner_radius_all(6)
+	st.set_content_margin_all(10)
+	exile_panel.add_theme_stylebox_override("panel", st)
+	root.add_child(exile_panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	exile_panel.add_child(v)
+	v.add_child(_label("Send the sick away?", 17, Color(1.0, 0.7, 0.55)))
+	exile_label = _label("", 14)
+	exile_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	exile_label.custom_minimum_size.x = 460
+	v.add_child(exile_label)
+	var h := HBoxContainer.new()
+	h.alignment = BoxContainer.ALIGNMENT_CENTER
+	h.add_theme_constant_override("separation", 10)
+	v.add_child(h)
+	h.add_child(_button("Send them away", _on_exile.bind(true), 150))
+	h.add_child(_button("Keep and care for them", _on_exile.bind(false), 180))
+	h.add_child(_button("Show", _on_exile_show, 70))
+
+
+func _on_exile_show() -> void:
+	var p: Human = game.sim.person(exile_pid)
+	if p != null:
+		game.camera.position = p.pos
+		game.selected_human_id = p.id
+
+
+func _refresh_exile() -> void:
+	var sim: Sim = game.sim
+	while not sim.exile_asks.is_empty():
+		var p := sim.person(int(sim.exile_asks[0]["pid"]))
+		if p == null or not p.alive or not p.is_sick():
+			sim.exile_asks.remove_at(0)
+			continue
+		if exile_pid != p.id:
+			exile_pid = p.id
+			var ill := str(Defs.ILLNESS[p.illness["type"]]["name"])
+			exile_label.text = "%s (%d) is badly sick with %s (%s chance of death) and it spreads from person to person. Your people ask: should %s be sent away to keep the rest of the tribe safe?\nSending someone away stops the spread, but the tribe will be sad for a while." % [
+				p.name, int(p.age_years()), ill.to_lower(), Survival.pct_text(Survival.death_risk(sim, p)), "he" if p.gender == "M" else "she"]
+		exile_panel.visible = true
+		return
+	exile_panel.visible = false
+	exile_pid = -1
+
+
+func _on_exile(yes: bool) -> void:
+	var sim: Sim = game.sim
+	if not sim.exile_asks.is_empty():
+		Quarantine.answer(sim, sim.exile_asks[0], yes)
+	exile_pid = -1
+	_refresh_exile()
 
 
 func _build_passage_dialog() -> void:
@@ -1471,6 +1543,15 @@ Paint Farming, Housing and Workshop zones and lay out roads (across lakes and ri
 [b]Lumber Yard[/b]
 Research Lumber Yard (Caveman Age) and build one near a forest. Lumberers fell whole trees, carry each log to the yard and chop it into 14 sticks. Felled trees grow back in time, but never under a building or road.
 
+[b]Bonus buildings[/b]
+Two per age, researched in the tree: Shaman's Circle and Great Hearth (Caveman), Flint Works and Stone Calendar (Stone), Marketplace and Bathhouse (Bronze), Academy and Iron Foundry (Iron). They're costly, and each kind's bonus counts at most twice.
+
+[b]Sickness[/b]
+When someone is badly sick with something catching, your people may ask you to send them away. It stops the spread but saddens the tribe.
+
+[b]Trading distance[/b]
+Traders go up to 160 tiles (home to home); Trade Wagons add 120 more. Both can be changed in Game Rules.
+
 [b]War structures[/b]
 Every age has a defensive post (Rock Lookout → Sling Platform → Bronze Bastion → Ballista Tower) that shoots enemies and predators, and offensive works (War Drum Circle, Ram Shed, Catapult, Trebuchet) that make your soldiers stronger or smash enemy buildings from afar. Research them in the Military row.
 
@@ -1494,6 +1575,9 @@ Click another tribe's flag → Trade. Choose goods to buy or sell and people to 
 
 [b]Bandits[/b]
 Outlaw camps in the wilds rob villages and ambush traders who pass nearby. Soldiers fight them; select a camp and send soldiers to destroy it and recover part of their stash.
+
+[b]Civil war[/b]
+When half or more of a tribe's adults dislike their leader, the tribe can split in a civil war: the rebels take the far half of the land and fight the loyalists. Keep people fed, housed and healthy, and back a popular leader. The Colony panel shows how many are against the leader.
 
 [b]Political happiness (Mood)[/b]
 Shown in the top bar and the Colony panel: government, leader, food, homes, health, wars, wealth and stolen elections all count. Below 20%, a group may leave each year to join another tribe (if that tribe agrees) or found their own.
@@ -2227,6 +2311,7 @@ func _process(delta: float) -> void:
 	_refresh_top()
 	_refresh_info()
 	_refresh_passage()
+	_refresh_exile()
 	_refresh_deal()
 	if game.sim.colony.gov_pending and not gov_layer.visible and game.sim.started and not game.sim.debug_log:
 		_show_gov_dialog()
@@ -2459,6 +2544,12 @@ func _approval_text(c: Colony) -> String:
 		s += "  " + ", ".join(parts) + "\n"
 	if v < Config.rule("defect_below") * 100.0:
 		s += "  [color=#ff8a7a]Below %d%%: each year there's a %d%% chance a group of your people leaves.[/color]\n" % [roundi(Config.rule("defect_below") * 100.0), roundi(Config.rule("defect_chance") * 100.0)]
+	var dl := c.dislike_share
+	var dcol := "9fe08a" if dl < 0.35 else ("ffd27a" if dl < 0.5 else "ff8a7a")
+	s += "  Adults against the leader: [color=#%s]%d%%[/color]" % [dcol, roundi(dl * 100.0)]
+	if dl >= 0.5:
+		s += "  [color=#ff8a7a]— civil war may break out![/color]"
+	s += "\n"
 	return s
 
 

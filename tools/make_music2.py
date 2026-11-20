@@ -63,6 +63,20 @@ TRACKS = [
     ("riverstone", 50, "pent_major", 70, [0, 2, 4, 1], {"pad": 1.0, "pluck": 0.8, "flute": 1.0, "drum": 0.2}, 310, 150),
 ]
 
+# third set (21-30): more marches and brass, same style
+TRACKS_B = [
+    ("drums_of_the_host", 48, "dorian", 112, [0, 3, 4, 3], {"pad": 0.6, "pluck": 0.4, "flute": 0.0, "drum": 0.5, "brass": 1.1, "march": 1.2}, 321, 145),
+    ("the_chiefs_return", 53, "ionian", 100, [0, 4, 3, 4], {"pad": 0.8, "pluck": 0.6, "flute": 0.3, "drum": 0.3, "brass": 1.0, "march": 0.9}, 332, 150),
+    ("shield_wall", 45, "aeolian", 104, [0, 6, 5, 4], {"pad": 0.7, "pluck": 0.3, "flute": 0.0, "drum": 0.6, "brass": 1.2, "march": 1.1}, 343, 145),
+    ("copper_crown", 50, "mixolydian", 96, [0, 6, 3, 4], {"pad": 0.9, "pluck": 0.7, "flute": 0.4, "drum": 0.3, "brass": 0.9, "march": 0.8}, 354, 150),
+    ("march_to_the_sea", 55, "pent_major", 108, [0, 2, 4, 3], {"pad": 0.7, "pluck": 0.8, "flute": 0.5, "drum": 0.3, "brass": 0.9, "march": 1.0}, 365, 145),
+    ("iron_vanguard", 43, "phrygian", 110, [0, 1, 0, 6], {"pad": 0.8, "pluck": 0.3, "flute": 0.0, "drum": 0.8, "brass": 1.2, "march": 1.2}, 376, 140),
+    ("standard_bearers", 52, "dorian", 98, [0, 3, 1, 4], {"pad": 0.8, "pluck": 0.6, "flute": 0.3, "drum": 0.4, "brass": 1.0, "march": 1.0}, 387, 150),
+    ("victory_feast", 57, "ionian", 92, [0, 3, 4, 0], {"pad": 0.8, "pluck": 1.0, "flute": 0.8, "drum": 0.5, "brass": 0.8, "march": 0.5}, 398, 150),
+    ("border_watch", 47, "aeolian", 88, [0, 5, 3, 4], {"pad": 1.0, "pluck": 0.5, "flute": 0.5, "drum": 0.4, "brass": 0.7, "march": 0.7}, 409, 150),
+    ("the_last_legion", 45, "dorian", 102, [0, 6, 3, 4], {"pad": 0.9, "pluck": 0.4, "flute": 0.0, "drum": 0.6, "brass": 1.2, "march": 1.1}, 420, 150),
+]
+
 
 def make_track(name, root, mode, bpm, prog, inst, seed, length):
     # strings, pads, flute and drums come from the original generator
@@ -142,10 +156,16 @@ def make_track(name, root, mode, bpm, prog, inst, seed, length):
 
 
 if __name__ == "__main__":
-    which = [int(x) for x in sys.argv[2:]] if len(sys.argv) > 2 else range(len(TRACKS))
+    # python3 make_music2.py audio [b] [indices...]   ("b" = the third set, tracks 21-30)
+    args = sys.argv[2:]
+    tracks, first = TRACKS, 11
+    if args and args[0] == "b":
+        tracks, first = TRACKS_B, 21
+        args = args[1:]
+    which = [int(x) for x in args] if args else range(len(tracks))
     for i in which:
-        tr = TRACKS[i]
+        tr = tracks[i]
         st = make_track(*tr)
-        path = os.path.join(OUT, "music", "%02d_%s.ogg" % (i + 11, tr[0]))
+        path = os.path.join(OUT, "music", "%02d_%s.ogg" % (i + first, tr[0]))
         A.write_ogg(path, st)
         print("wrote", path, flush=True)

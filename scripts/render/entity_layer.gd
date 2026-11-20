@@ -244,6 +244,111 @@ func _war_structure(sim: Sim, b: Building, o: Vector2, s: Vector2, m: Color) -> 
 			draw_circle(pv, 1.6, Color(0.35, 0.35, 0.38) * m)
 
 
+# ------------------------------------------------------------------ bonus buildings
+func _bonus_structure(sim: Sim, b: Building, o: Vector2, s: Vector2, m: Color, era: int, roof: Color) -> void:
+	var tsec := Time.get_ticks_msec() / 1000.0
+	var c := o + s * 0.5
+	var wood := Color(0.50, 0.34, 0.18) * m
+	var dark := Color(0.32, 0.21, 0.11) * m
+	var stone := Color(0.64, 0.62, 0.58) * m
+	match b.type:
+		"shaman_circle":
+			# a ring of painted posts around a smoking herb fire, hides and skulls
+			draw_circle(c, s.x * 0.46, Color(0.52, 0.44, 0.30, 0.55 * m.a))
+			for k in 8:
+				var a := k * TAU / 8.0
+				var pp := c + Vector2(cos(a), sin(a)) * s.x * 0.38
+				draw_circle(pp + Vector2(1, 1), 2.4, Color(0, 0, 0, 0.3 * m.a))
+				draw_circle(pp, 2.2, wood)
+				draw_circle(pp, 1.0, (Color(0.85, 0.3, 0.2) if k % 2 == 0 else Color(0.95, 0.9, 0.75)) * m)
+			draw_circle(c, 4.5, Color(0.30, 0.28, 0.26) * m)
+			draw_circle(c, 2.8, Color(1.0, 0.55, 0.2, (0.6 + 0.4 * sin(tsec * 7.0)) * m.a))
+			for k in 3:
+				var ph := fmod(tsec * 0.5 + k * 0.33, 1.0)
+				draw_circle(c + Vector2(sin(ph * 6.0) * 3.0, -ph * 16.0), 1.5 + ph * 3.0, Color(0.55, 0.75, 0.55, 0.45 * (1.0 - ph) * m.a))   # herb smoke
+			draw_rect(Rect2(c + Vector2(-14, 6), Vector2(8, 5)), Color(0.72, 0.58, 0.38) * m)       # hide mat
+			draw_circle(c + Vector2(10, -9), 2.0, Color(0.92, 0.9, 0.82) * m)                      # skull
+		"great_hearth":
+			# a long stone-lined fire pit under a timber smoke roof, with spits
+			draw_rect(Rect2(o + Vector2(2, 3), s - Vector2(4, 6)), stone.darkened(0.2))
+			draw_rect(Rect2(o + Vector2(4, 5), s - Vector2(8, 10)), Color(0.25, 0.22, 0.20) * m)
+			for k in 5:
+				var fx := o.x + 8 + k * (s.x - 16) / 4.0
+				var fl := 0.6 + 0.4 * sin(tsec * 8.0 + k * 1.3)
+				draw_circle(Vector2(fx, c.y), 3.0, Color(1.0, 0.45, 0.12, fl * m.a))
+				draw_circle(Vector2(fx, c.y - 1), 1.6, Color(1.0, 0.85, 0.4, fl * m.a))
+			draw_line(o + Vector2(4, c.y - o.y - 6), o + Vector2(s.x - 4, c.y - o.y - 6), dark, 1.4)   # spit
+			draw_circle(Vector2(c.x - 6, c.y - 6), 2.4, Color(0.6, 0.32, 0.2) * m)
+			for pt in [Vector2(2, 2), Vector2(s.x - 3, 2), Vector2(2, s.y - 3), Vector2(s.x - 3, s.y - 3)]:
+				draw_circle(o + pt, 1.8, dark)
+		"flint_works":
+			_gable_roof(Rect2(o + Vector2(1, 1), Vector2(s.x - 2, s.y - 14)), Color(0.55, 0.45, 0.30) * m, era, m)
+			# open knapping floor in front: flint nodules, flakes and finished blades on a mat
+			var fl2 := Rect2(o + Vector2(3, s.y - 13), Vector2(s.x - 6, 11))
+			draw_rect(fl2, Color(0.62, 0.55, 0.42) * m)
+			for k in 7:
+				draw_circle(fl2.position + Vector2(4 + k * 5.5, 3 + (k % 3) * 2.5), 1.6, Color(0.30, 0.30, 0.34) * m)
+			for k in 4:
+				var bx := fl2.position + Vector2(8 + k * 8, 8)
+				draw_colored_polygon(PackedVector2Array([bx, bx + Vector2(5, -1), bx + Vector2(0, 2)]), Color(0.75, 0.75, 0.80) * m)
+		"stone_calendar":
+			# a ring of tall stones with a sun-stone in the middle and a sightline
+			draw_circle(c, s.x * 0.47, Color(0.50, 0.46, 0.36, 0.45 * m.a))
+			for k in 10:
+				var a := k * TAU / 10.0
+				var sp := c + Vector2(cos(a), sin(a)) * s.x * 0.40
+				draw_rect(Rect2(sp - Vector2(2.2, 3.5) + Vector2(1, 1), Vector2(4.4, 7)), Color(0, 0, 0, 0.3 * m.a))
+				draw_rect(Rect2(sp - Vector2(2.2, 3.5), Vector2(4.4, 7)), stone)
+				draw_rect(Rect2(sp - Vector2(2.2, 3.5), Vector2(1.4, 7)), stone.lightened(0.15))
+			draw_circle(c, 4.0, stone.darkened(0.1))
+			draw_circle(c, 2.2, Color(0.95, 0.80, 0.35) * m)                 # sun-stone
+			var sun := tsec * 0.2
+			draw_line(c, c + Vector2(cos(sun), sin(sun)) * s.x * 0.36, Color(0.95, 0.85, 0.5, 0.6 * m.a), 1.0)
+		"marketplace":
+			# a paved square of colourful stalls
+			draw_rect(Rect2(o + Vector2(1, 1), s - Vector2(2, 2)), Color(0.74, 0.68, 0.56) * m)
+			var cols := [Color(0.80, 0.25, 0.20), Color(0.25, 0.50, 0.80), Color(0.90, 0.75, 0.25), Color(0.35, 0.65, 0.35)]
+			for k in 4:
+				var st := o + Vector2(4 + (k % 2) * (s.x * 0.5), 4 + (k / 2) * (s.y * 0.5))
+				var w := s.x * 0.5 - 8
+				for j in int(w / 3.0):
+					draw_rect(Rect2(st + Vector2(j * 3, 0), Vector2(3, 6)), ((cols[k] as Color) if j % 2 == 0 else Color(0.95, 0.92, 0.85)) * m)
+				for j in 3:
+					draw_circle(st + Vector2(4 + j * 5, 10), 1.6, [Color(0.85, 0.3, 0.3), Color(0.9, 0.7, 0.3), Color(0.5, 0.75, 0.35)][j] * m)   # goods
+			draw_circle(c, 2.5, Color(0.6, 0.6, 0.62) * m)              # well / scales in the middle
+		"bathhouse":
+			_hip_roof(Rect2(o + Vector2(1, 1), Vector2(s.x * 0.45, s.y - 2)), roof, m)
+			var pool := Rect2(o + Vector2(s.x * 0.5, 3), Vector2(s.x * 0.5 - 3, s.y - 6))
+			draw_rect(pool, stone.darkened(0.15))
+			draw_rect(pool.grow(-2), Color(0.35, 0.62, 0.78) * m)
+			for k in 3:
+				var ph := fmod(tsec * 0.4 + k * 0.33, 1.0)
+				draw_circle(pool.get_center() + Vector2((k - 1) * 6, -ph * 8.0), 1.5 + ph * 2.5, Color(1, 1, 1, 0.35 * (1.0 - ph) * m.a))   # steam
+			for k in 4:
+				draw_circle(pool.position + Vector2(2 + k * pool.size.x / 3.5, 1.5), 1.2, stone.lightened(0.2))     # columns
+		"academy":
+			var base := Rect2(o + Vector2(1, 1), s - Vector2(2, 2))
+			draw_rect(base, Color(0.82, 0.79, 0.72) * m)
+			draw_rect(base, Color(0.50, 0.47, 0.42) * m, false, 1.0)
+			_hip_roof(Rect2(o + Vector2(4, 4), s - Vector2(8, 14)), Color(0.66, 0.30, 0.22) * m, m)
+			for k in 6:
+				draw_circle(o + Vector2(6 + k * (s.x - 12) / 5.0, s.y - 6), 1.5, Color(0.95, 0.93, 0.88) * m)   # colonnade
+			draw_rect(Rect2(c + Vector2(-5, 6), Vector2(10, 4)), Color(0.90, 0.84, 0.66) * m)    # scroll table
+			draw_line(c + Vector2(-4, 8), c + Vector2(4, 8), Color(0.3, 0.3, 0.35) * m, 0.6)
+		"iron_foundry":
+			_gable_roof(Rect2(o + Vector2(1, 1), Vector2(s.x - 14, s.y - 4)), Color(0.32, 0.30, 0.30) * m, era, m)
+			# a squat bloomery furnace with a glowing mouth and a tall chimney
+			var fz := o + Vector2(s.x - 10, s.y * 0.5)
+			draw_circle(fz, 6.5, Color(0.42, 0.36, 0.32) * m)
+			draw_circle(fz, 4.5, Color(0.30, 0.26, 0.24) * m)
+			draw_circle(fz + Vector2(0, 2), 2.4, Color(1.0, 0.45, 0.1, (0.7 + 0.3 * sin(tsec * 10.0)) * m.a))
+			for k in 3:
+				var ph := fmod(tsec * 0.6 + k * 0.33, 1.0)
+				draw_circle(fz + Vector2(ph * 6.0, -6.0 - ph * 12.0), 1.6 + ph * 3.0, Color(0.35, 0.35, 0.38, 0.55 * (1.0 - ph) * m.a))
+			for k in 3:
+				draw_rect(Rect2(o + Vector2(4 + k * 6, s.y - 6), Vector2(4, 3)), Color(0.45, 0.45, 0.50) * m)   # iron blooms
+
+
 # ------------------------------------------------------------------ monolith & bandit camp
 ## A tall rough standing stone of grey granite on a trampled patch, with a few smaller stones
 ## around it. Carved notches on its face count the years.
@@ -824,7 +929,8 @@ const SHADOW_HEIGHT := {"campfire": 0.0, "fence": 3.0, "wall": 7.0, "gate": 8.0,
 	"storage": 8.0, "granary": 12.0, "workshop": 12.0, "healer_hut": 10.0, "mine": 8.0, "hunting_camp": 9.0,
 	"watchtower": 22.0, "harbor": 6.0, "monolith": 0.0, "lumber_yard": 0.0, "mercenary_hall": 12.0, "bandit_camp": 0.0,
 	"lookout_perch": 14.0, "war_drum_circle": 0.0, "sling_platform": 12.0, "ram_shed": 9.0, "bastion": 18.0, "catapult": 8.0,
-	"ballista_tower": 24.0, "trebuchet": 22.0}
+	"ballista_tower": 24.0, "trebuchet": 22.0, "shaman_circle": 4.0, "great_hearth": 3.0, "flint_works": 10.0, "stone_calendar": 12.0,
+	"marketplace": 8.0, "bathhouse": 12.0, "academy": 18.0, "iron_foundry": 14.0}
 const ROOFS := [Color(0.72, 0.62, 0.34), Color(0.66, 0.58, 0.30), Color(0.45, 0.30, 0.18), Color(0.70, 0.30, 0.22)]
 
 
@@ -849,6 +955,8 @@ func _draw_building(sim: Sim, b: Building) -> void:
 	match b.type:
 		"lookout_perch", "war_drum_circle", "sling_platform", "ram_shed", "bastion", "catapult", "ballista_tower", "trebuchet":
 			_war_structure(sim, b, o, s, m)
+		"shaman_circle", "great_hearth", "flint_works", "stone_calendar", "marketplace", "bathhouse", "academy", "iron_foundry":
+			_bonus_structure(sim, b, o, s, m, era, roof)
 		"monolith":
 			_monolith(o, s, b.built, m)
 		"lumber_yard":
