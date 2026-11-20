@@ -1892,31 +1892,43 @@ static func _do_wreck(sim: Sim, p: Human, dt: float) -> void:
 static func _plan_smith(sim: Sim, p: Human) -> bool:
 	var c := sim.col_of(p)
 	var b := c.nearest_building(p.pos, "blacksmith")
+	var bench := c.nearest_building(p.pos, "smithing_bench")
+	# the bench forges custom designs: go there when it's busy or a design is waiting
+	if bench != null and bench.built and (bench.craft != "" or c.weapon_orders.any(func(w): return Smithing.is_custom(str(w)))):
+		if b == null or b.craft == "" or bench.craft != "":
+			b = bench
+	if b == null and bench != null:
+		b = bench
 	if b == null:
 		return false
 	if b.craft == "":
 		var pick := next_weapon(c, b)
 		if pick == "":
 			return false
-		c.pay(Defs.WEAPONS[pick]["cost"])
+		c.pay(Defs.weapon(pick)["cost"])
 		b.craft = pick
 		b.craft_progress = 0.0
-	return _set_task(sim, p, "forge", b.tile + Vector2i(b.size().x, 1), PRIO_JOB, {"bid": b.id, "label": "Forging a %s" % Defs.WEAPONS[b.craft]["name"].to_lower()})
+	return _set_task(sim, p, "forge", b.tile + Vector2i(b.size().x, 1), PRIO_JOB, {"bid": b.id, "label": "Forging a %s" % str(Defs.weapon(b.craft)["name"])})
 
 
 ## What the blacksmith should make next: the player's queue first, then (if on auto) weapons
 ## for soldiers who have none. "" = nothing affordable to do.
 static func next_weapon(c: Colony, b: Building) -> String:
-	while not c.weapon_orders.is_empty():
-		var w := str(c.weapon_orders[0])
-		if int(Defs.WEAPONS[w]["era"]) > c.era_i:
-			c.weapon_orders.pop_front()
+	var bench := b.type == "smithing_bench"
+	var k := 0
+	while k < c.weapon_orders.size():
+		var w := str(c.weapon_orders[k])
+		if not Defs.is_weapon(w) or (not Smithing.is_custom(w) and int(Defs.weapon(w)["era"]) > c.era_i):
+			c.weapon_orders.remove_at(k)
 			continue
-		if c.has_cost(Defs.WEAPONS[w]["cost"]):
-			c.weapon_orders.pop_front()
+		if bench and not Smithing.is_custom(w):
+			k += 1
+			continue          # the bench only makes your own designs
+		if c.has_cost(Defs.weapon(w)["cost"]):
+			c.weapon_orders.remove_at(k)
 			return w
 		break
-	if not b.auto_craft:
+	if not b.auto_craft or bench:
 		return ""
 	# who needs arming: Archers want ranged weapons, Warriors close ones
 	var need_r := 0
@@ -1930,7 +1942,7 @@ static func next_weapon(c: Colony, b: Building) -> String:
 				need_m += 1
 	var stock_r := 0
 	var stock_m := 0
-	for w in Defs.WEAPON_ORDER:
+	for w in Defs.all_weapons():
 		if Defs.weapon_ranged(w):
 			stock_r += int(c.count(w))
 		else:
@@ -1945,13 +1957,13 @@ static func next_weapon(c: Colony, b: Building) -> String:
 	opts.reverse()                       # newest age first
 	var want_ranged := need_r > need_m or (need_r <= 0 and need_m <= 0 and stock_r < 1)
 	for w in opts:
-		var is_r := float(Defs.WEAPONS[w]["range"]) > 2.0
+		var is_r := float(Defs.weapon(w)["range"]) > 2.0
 		if is_r != want_ranged:
 			continue
-		if c.has_cost(Defs.WEAPONS[w]["cost"]):
+		if c.has_cost(Defs.weapon(w)["cost"]):
 			return w
 	for w in opts:
-		if c.has_cost(Defs.WEAPONS[w]["cost"]):
+		if c.has_cost(Defs.weapon(w)["cost"]):
 			return w
 	return ""
 
@@ -1965,10 +1977,10 @@ static func _do_forge(sim: Sim, p: Human, dt: float) -> void:
 	b.craft_progress += dt / Defs.HOUR * _wm(sim, p, "smith") * (1.2 if b.zoned else 1.0)
 	p.gain_skill("smith", 0.002)
 	p.task["work"] = float(p.task["work"]) + dt
-	var w: Dictionary = Defs.WEAPONS[b.craft]
+	var w: Dictionary = Defs.weapon(b.craft)
 	if b.craft_progress >= float(w["hours"]):
 		c.add(b.craft, 1)
-		sim.notify(c.civ_id, "The blacksmith forged a %s." % str(w["name"]).to_lower(), "good")
+		sim.notify(c.civ_id, "The %s forged a %s." % ["smiths" if b.type == "smithing_bench" else "blacksmith", str(w["name"])], "good")
 		b.craft = ""
 		b.craft_progress = 0.0
 		_done(sim, p)
@@ -1982,8 +1994,8 @@ static func _plan_soldier(sim: Sim, p: Human) -> bool:
 	# arm yourself with the best weapon of your kind in the stockpile (an Archer drops a melee weapon for a ranged one)
 	var best := c.best_stock_weapon(p.soldier_kind)
 	var wrong_kind := p.weapon != "" and Defs.weapon_ranged(p.weapon) != (p.soldier_kind == "archer")
-	if best != "" and (p.weapon == "" or wrong_kind or float(Defs.WEAPONS[best]["dmg"]) > float(Defs.WEAPONS[p.weapon]["dmg"]) + 2.0):
-		if _set_task(sim, p, "equip", c.drop_point(p.pos), PRIO_JOB, {"weapon": best, "label": "Taking up a %s" % Defs.WEAPONS[best]["name"].to_lower()}):
+	if best != "" and (p.weapon == "" or wrong_kind or float(Defs.weapon(best)["dmg"]) > float(Defs.weapon(p.weapon)["dmg"]) + 2.0):
+		if _set_task(sim, p, "equip", c.drop_point(p.pos), PRIO_JOB, {"weapon": best, "label": "Taking up a %s" % Defs.weapon(best)["name"].to_lower()}):
 			return true
 	# deal with predators prowling around the village, and animals marked in a clearing box
 	var home_px := sim.world.center_of(c.home)
@@ -2022,7 +2034,7 @@ static func _do_equip(sim: Sim, p: Human) -> void:
 		if p.weapon != "":
 			c.add(p.weapon, 1)
 		p.weapon = w
-		sim.notify(c.civ_id, "%s took up a %s." % [p.name, Defs.WEAPONS[w]["name"].to_lower()], "info")
+		sim.notify(c.civ_id, "%s took up a %s." % [p.name, Defs.weapon(w)["name"].to_lower()], "info")
 	_done(sim, p)
 
 
@@ -2172,8 +2184,8 @@ static func _target_dist(sim: Sim, p: Human, kind: String, tid: int, tpos: Vecto
 ## Damage one blow does, from weapon, skill and the tribe's research.
 static func strike_damage(sim: Sim, p: Human, vs_animal: bool) -> float:
 	var c := sim.col_of(p)
-	if p.weapon != "":
-		var w: Dictionary = Defs.WEAPONS[p.weapon]
+	if p.weapon != "" and not (vs_animal and Smithing.is_custom(p.weapon)):     # custom weapons are for fighting people
+		var w: Dictionary = Defs.weapon(p.weapon)
 		var dmg := float(w["dmg"]) + p.skill("soldier") * 0.8 + c.bonus("fight")
 		if vs_animal:
 			dmg += c.bonus("hunt_dmg") * 0.5
@@ -2184,8 +2196,8 @@ static func strike_damage(sim: Sim, p: Human, vs_animal: bool) -> float:
 
 
 static func weapon_reach(p: Human) -> float:
-	if p.weapon != "":
-		return float(Defs.WEAPONS[p.weapon]["range"])
+	if p.weapon != "" and not (Smithing.is_custom(p.weapon) and str(p.task.get("kind", "")) == "animal"):
+		return float(Defs.weapon(p.weapon)["range"])
 	return 2.4 if p.job == "hunter" else 1.3
 
 
@@ -2207,7 +2219,7 @@ static func _engage(sim: Sim, p: Human, t: Dictionary, dt: float) -> String:
 			p.facing = signf(tpos.x - p.pos.x)
 		if p.attack_cd <= 0.0:
 			p.attack_cd = 1.4
-			var ranged := p.weapon != "" and float(Defs.WEAPONS[p.weapon]["range"]) > 2.0
+			var ranged := p.weapon != "" and float(Defs.weapon(p.weapon)["range"]) > 2.0
 			if ranged:
 				sim.tower_shots.append([p.pos + Vector2(0, -6), tpos, 0.25])
 			var skill := p.skill("soldier") if p.job == "soldier" else p.skill("hunter")

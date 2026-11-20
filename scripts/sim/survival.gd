@@ -356,6 +356,27 @@ static func daily(sim: Sim, c: Colony) -> void:
 				singles_m.append(p)
 			else:
 				singles_f.append(p)
+	# Easy Birth: a woman still owed a child gets a partner first, if any man is free
+	if Config.rule("easy_birth") >= 0.5:
+		for f in singles_f:
+			if f.partner_id != -1 or not easy_birth_due(c, f, people.size(), c.housing()):
+				continue
+			var pick: Human = null
+			for m in singles_m:
+				if m.partner_id != -1:
+					continue
+				if _related(m, f):
+					if Config.rule("allow_kin") < 0.5:
+						continue
+					if pick == null:
+						pick = m
+					continue
+				pick = m
+				break
+			if pick != null:
+				pick.partner_id = f.id
+				f.partner_id = pick.id
+				sim.notify(c.civ_id, "%s and %s have become partners." % [pick.name, f.name], "good")
 	for m in singles_m:
 		for f in singles_f:
 			if f.partner_id != -1 or m.partner_id != -1:
@@ -392,6 +413,18 @@ static func daily(sim: Sim, c: Colony) -> void:
 		var partner := c.person(p.partner_id)
 		if partner == null or not partner.alive:
 			continue
+		var due := Config.rule("easy_birth") >= 0.5 and easy_birth_due(c, p, pop, housing)
+		if due:
+			# Easy Birth: hunger, a bad season or empty stores don't stop her; the closer she is
+			# to 45 with children still owed, the surer it gets
+			var owed = easy_birth_required(c) - p.births
+			var per_child := (Config.rule("pregnancy_days") + Config.rule("birth_recovery")) / Defs.AGE_YEAR_DAYS + 0.5
+			var urgent = 45.0 - p.age_years() <= owed * per_child + 1.0
+			var ch := 1.0 if urgent else maxf(0.35, 0.22 * Config.rule("birth_chance"))
+			if p.health > 15.0 and sim.rng.randf() < ch:
+				p.pregnant_days = 0.0
+				sim.notify(c.civ_id, "%s is expecting a child." % p.name, "good")
+			continue
 		if p.health < 45.0 or p.hunger < 25.0 or p.is_sick():
 			continue
 		if c.food_days() < 0.6:
@@ -415,6 +448,21 @@ static func daily(sim: Sim, c: Colony) -> void:
 		var need := float(pop) * 20.0
 		if c.food_days() * pop < need:
 			sim.notify(c.civ_id, "Winter is near and food stores are low (%.1f days). Hunt, gather and dry meat!" % c.food_days(), "warn")
+
+
+## Easy Birth: children every woman should have had by 45 (2, or 1 in a tribe of over 100).
+static func easy_birth_required(c: Colony) -> int:
+	return 1 if c.population() > 100 else 2
+
+
+## Whether Easy Birth applies to this woman now: she is of age, under 45, still owed a child,
+## and the tribe has room (without enough housing the rule waits until there is).
+static func easy_birth_due(c: Colony, p: Human, pop: int, housing: int) -> bool:
+	if p.gender != "F" or p.age_years() < Config.rule("consent_age") or p.age_years() >= 45.0:
+		return false
+	if p.births >= easy_birth_required(c):
+		return false
+	return pop < housing + 4
 
 
 static func related(a: Human, b: Human) -> bool:

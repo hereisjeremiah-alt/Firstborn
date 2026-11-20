@@ -123,21 +123,28 @@ static func generate(seed_value: int, size: int) -> WorldMap:
 		if _carve_river(wm, s, rng):
 			made += 1
 
+	return finish_world(wm, rng, valley_hi)
+
+
+## Springs, valleys, fish, resources and the starting spot: the last steps of every world.
+static func finish_world(wm: WorldMap, rng: RandomNumberGenerator, valley_hi: float) -> WorldMap:
+	var size := wm.w
+	var n := wm.w * wm.h
 	# --- springs: clean fresh water in the hills
 	var springs := 0
-	tries = 0
+	var tries := 0
 	while springs < maxi(4, size / 32) and tries < 2000:
 		tries += 1
-		var p := Vector2i(rng.randi_range(4, size - 5), rng.randi_range(4, size - 5))
+		var p := Vector2i(rng.randi_range(4, wm.w - 5), rng.randi_range(4, wm.h - 5))
 		var pt := wm.t_at(p)
 		if pt == Defs.T.HILLS or pt == Defs.T.GRASSLAND or pt == Defs.T.FOREST or pt == Defs.T.VALLEY:
 			wm.terrain[wm.idx(p)] = Defs.T.SPRING
 			springs += 1
 
 	# --- valleys: fertile lowland strips along rivers in upland areas
-	for y in range(1, size - 1):
-		for x in range(1, size - 1):
-			var i := y * size + x
+	for y in range(1, wm.h - 1):
+		for x in range(1, wm.w - 1):
+			var i := y * wm.w + x
 			if wm.terrain[i] != Defs.T.RIVER:
 				continue
 			for oy in range(-2, 3):
@@ -151,9 +158,9 @@ static func generate(seed_value: int, size: int) -> WorldMap:
 						wm.terrain[qi] = Defs.T.VALLEY
 
 	# --- beaches also form along lakes in warm areas
-	for y in range(1, size - 1):
-		for x in range(1, size - 1):
-			var i := y * size + x
+	for y in range(1, wm.h - 1):
+		for x in range(1, wm.w - 1):
+			var i := y * wm.w + x
 			if wm.terrain[i] != Defs.T.LAKE:
 				continue
 			for d in N4:
@@ -396,8 +403,9 @@ static func _near_mountain(wm: WorldMap, x: int, y: int) -> bool:
 static func _find_spawn(wm: WorldMap, rng: RandomNumberGenerator) -> Vector2i:
 	var good := [Defs.T.PLAINS, Defs.T.GRASSLAND, Defs.T.VALLEY, Defs.T.FOREST, Defs.T.SAVANNA, Defs.T.STEPPE]
 	var margin := int(wm.w * 0.15)
+	var margin_y := int(wm.h * 0.15)
 	for attempt in 6000:
-		var p := Vector2i(rng.randi_range(margin, wm.w - margin), rng.randi_range(margin, wm.h - margin))
+		var p := Vector2i(rng.randi_range(margin, wm.w - margin), rng.randi_range(margin_y, wm.h - margin_y))
 		var i := wm.idx(p)
 		if not good.has(int(wm.terrain[i])):
 			continue

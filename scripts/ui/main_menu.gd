@@ -8,6 +8,8 @@ var bg_tex: TextureRect
 var pages := {}
 var seed_edit: LineEdit
 var size_opt: OptionButton
+var map_opt: OptionButton
+var easy_check: CheckButton
 var tribes_spin: SpinBox
 var tribe_edit: LineEdit
 var preview: TextureRect
@@ -149,6 +151,14 @@ func _page_new() -> Control:
 	seed_row.add_child(seed_edit)
 	seed_row.add_child(_button("Random", _on_random))
 
+	left.add_child(_label("Map", 15))
+	map_opt = OptionButton.new()
+	map_opt.add_item("Random world", 0)
+	map_opt.add_item("Earth (today's continents)", 1)
+	map_opt.tooltip_text = "Earth: today's continents, seas, mountains, deserts, rainforests and great rivers, from 80°N to 56°S."
+	map_opt.select(1 if Config.earth_mode else 0)
+	map_opt.item_selected.connect(func(i): Config.earth_mode = i == 1; _on_preview())
+	left.add_child(map_opt)
 	left.add_child(_label("World size", 15))
 	size_opt = OptionButton.new()
 	for i in SIZES.size():
@@ -174,6 +184,13 @@ func _page_new() -> Control:
 	fog_check.tooltip_text = "Only the land around your camp is known at first. Your Billies uncover the rest as they explore."
 	fog_check.toggled.connect(func(on): Config.fog_of_war = on)
 	left.add_child(fog_check)
+	easy_check = CheckButton.new()
+	easy_check.text = "Easy Birth (every woman has at least 2 children)"
+	easy_check.button_pressed = Config.rule("easy_birth") >= 0.5
+	easy_check.focus_mode = Control.FOCUS_NONE
+	easy_check.tooltip_text = "Every woman gives birth at least twice before 45 (once when her tribe has more than 100 people). Paused while the tribe lacks housing. Also in Game Rules."
+	easy_check.toggled.connect(func(on): Config.rules["easy_birth"] = 1.0 if on else 0.0; _sync_easy())
+	left.add_child(easy_check)
 	left.add_child(HSeparator.new())
 	var custom := HBoxContainer.new()
 	custom.add_theme_constant_override("separation", 6)
@@ -248,7 +265,7 @@ func _on_preview() -> void:
 	var s := _current_seed()
 	preview_label.text = "Generating…"
 	await get_tree().process_frame
-	var wm := WorldGen.generate(s, _current_size())
+	var wm := EarthGen.generate(s, _current_size()) if Config.earth_mode else WorldGen.generate(s, _current_size())
 	var img := MapView.make_texture(wm).get_image()
 	for oy in range(-2, 3):
 		for ox in range(-2, 3):
@@ -329,6 +346,17 @@ func _page_rules() -> Control:
 func _on_rule_changed(v: float, key: String) -> void:
 	Config.rules[key] = v
 	_show_rule(key)
+	if key == "easy_birth":
+		_sync_easy()
+
+
+## Keeps the Easy Birth switch on the new-world page and the Game Rules slider in step.
+func _sync_easy() -> void:
+	if easy_check != null:
+		easy_check.set_pressed_no_signal(Config.rule("easy_birth") >= 0.5)
+	if rules_sliders.has("easy_birth"):
+		rules_sliders["easy_birth"].set_value_no_signal(Config.rule("easy_birth"))
+		_show_rule("easy_birth")
 
 
 func _show_rule(key: String) -> void:
@@ -351,6 +379,7 @@ func _show_rule(key: String) -> void:
 
 func _on_preset(pn: String) -> void:
 	Config.apply_preset(pn)
+	_sync_easy()
 	for k in rules_sliders.keys():
 		rules_sliders[k].set_value_no_signal(Config.rule(k))
 		_show_rule(k)
@@ -359,11 +388,13 @@ func _on_preset(pn: String) -> void:
 
 func _on_rules_random_new() -> void:
 	Config.randomize_rules()
+	_sync_easy()
 	preview_label.text = "Game rules randomized! Open Game Rules… to see them."
 
 
 func _on_rules_random() -> void:
 	Config.randomize_rules()
+	_sync_easy()
 	for k in rules_sliders.keys():
 		rules_sliders[k].set_value_no_signal(Config.rule(k))
 		_show_rule(k)

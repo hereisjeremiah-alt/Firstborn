@@ -244,6 +244,30 @@ func _war_structure(sim: Sim, b: Building, o: Vector2, s: Vector2, m: Color) -> 
 			draw_circle(pv, 1.6, Color(0.35, 0.35, 0.38) * m)
 
 
+# ------------------------------------------------------------------ weaponsmithing bench
+func _smithing_bench(b: Building, o: Vector2, s: Vector2, m: Color) -> void:
+	var wood := Color(0.55, 0.38, 0.20) * m
+	var dark := Color(0.34, 0.22, 0.11) * m
+	# a lean-to roof over the back, a heavy work bench with an anvil stone and tools
+	draw_rect(Rect2(o + Vector2(1, 1), Vector2(s.x - 2, 9)), Color(0.52, 0.44, 0.30) * m)
+	for k in 6:
+		draw_line(o + Vector2(2 + k * (s.x - 4) / 5.0, 1), o + Vector2(2 + k * (s.x - 4) / 5.0, 10), dark, 0.8)
+	draw_rect(Rect2(o + Vector2(3, 13), Vector2(s.x - 6, 9)), wood)
+	draw_rect(Rect2(o + Vector2(3, 13), Vector2(s.x - 6, 9)), dark, false, 1.0)
+	for lx in [5.0, s.x - 6.0]:
+		draw_line(o + Vector2(lx, 22), o + Vector2(lx, 28), dark, 1.6)
+	draw_circle(o + Vector2(s.x * 0.68, 17.5), 3.2, Color(0.45, 0.45, 0.48) * m)    # anvil stone
+	draw_line(o + Vector2(8, 16), o + Vector2(14, 19), Color(0.45, 0.30, 0.18) * m, 1.4)   # hammer handle
+	draw_rect(Rect2(o + Vector2(13, 17.5), Vector2(3, 3)), Color(0.40, 0.40, 0.44) * m)
+	# finished blades hanging on the back wall
+	for k in 3:
+		var bx := o.x + 6 + k * 7
+		draw_line(Vector2(bx, o.y + 3), Vector2(bx, o.y + 9), Color(0.70, 0.72, 0.78) * m, 1.4)
+		draw_line(Vector2(bx - 1.5, o.y + 7), Vector2(bx + 1.5, o.y + 7), dark, 1.0)
+	draw_circle(o + Vector2(s.x - 5, s.y - 4), 2.4, Color(0.35, 0.33, 0.30) * m)   # quench bucket
+	draw_circle(o + Vector2(s.x - 5, s.y - 4), 1.6, Color(0.30, 0.45, 0.60) * m)
+
+
 # ------------------------------------------------------------------ bonus buildings
 func _bonus_structure(sim: Sim, b: Building, o: Vector2, s: Vector2, m: Color, era: int, roof: Color) -> void:
 	var tsec := Time.get_ticks_msec() / 1000.0
@@ -768,7 +792,7 @@ func _draw_human(p: Human, selected: bool, zoom: float, tribe: Color) -> void:
 		# helmet: leather, bronze or iron depending on the weapon's age
 		var hc := Color(0.45, 0.32, 0.20)
 		if p.weapon != "":
-			hc = [Color(0.45, 0.32, 0.20), Color(0.45, 0.32, 0.20), Color(0.80, 0.56, 0.26), Color(0.62, 0.64, 0.68)][int(Defs.WEAPONS[p.weapon]["era"])]
+			hc = [Color(0.45, 0.32, 0.20), Color(0.45, 0.32, 0.20), Color(0.80, 0.56, 0.26), Color(0.62, 0.64, 0.68)][int(Defs.weapon(p.weapon)["era"])]
 		draw_rect(Rect2(head + Vector2(-3.6, -4.2) * s, Vector2(7.2, 3.0) * s), hc)
 		draw_rect(Rect2(head + Vector2(-0.5, -5.2) * s, Vector2(1.0, 1.2) * s), hc.lightened(0.2))
 	# status
@@ -787,7 +811,20 @@ func _draw_human(p: Human, selected: bool, zoom: float, tribe: Color) -> void:
 
 
 func _draw_weapon(p: Human, pos: Vector2, f: float, bob: float) -> void:
-	var wd: Dictionary = Defs.WEAPONS[p.weapon]
+	if Smithing.is_custom(p.weapon):
+		# the player's own pixel-art design, held upright in the hand
+		var tex := Smithing.texture(game.sim, p.weapon)
+		if tex != null:
+			var hand2 := pos + Vector2(f * 5, bob)
+			var sc := 0.55
+			var sz := Vector2(tex.get_width(), tex.get_height()) * sc
+			var ty: Dictionary = Smithing.TYPES[str(Defs.weapon(p.weapon)["type"])]
+			var grip := float((ty["blade"] as Vector2i).y) * sc + 2.0      # hold it just below the blade
+			draw_set_transform(hand2, f * 0.18, Vector2.ONE)
+			draw_texture_rect(tex, Rect2(Vector2(-sz.x * 0.5, -grip), sz), false)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		return
+	var wd: Dictionary = Defs.weapon(p.weapon)
 	var metal = [Color(0.55, 0.55, 0.55), Color(0.55, 0.55, 0.55), Color(0.82, 0.58, 0.28), Color(0.72, 0.74, 0.78)][int(wd["era"])]
 	var shaft := Color(0.45, 0.32, 0.2)
 	var hand := pos + Vector2(f * 5, bob)
@@ -943,7 +980,7 @@ const SHADOW_HEIGHT := {"campfire": 0.0, "fence": 3.0, "wall": 7.0, "gate": 8.0,
 	"watchtower": 22.0, "harbor": 6.0, "monolith": 0.0, "lumber_yard": 0.0, "mercenary_hall": 12.0, "bandit_camp": 0.0,
 	"lookout_perch": 14.0, "war_drum_circle": 0.0, "sling_platform": 12.0, "ram_shed": 9.0, "bastion": 18.0, "catapult": 8.0,
 	"ballista_tower": 24.0, "trebuchet": 22.0, "shaman_circle": 4.0, "great_hearth": 3.0, "flint_works": 10.0, "stone_calendar": 12.0,
-	"marketplace": 8.0, "bathhouse": 12.0, "academy": 18.0, "iron_foundry": 14.0}
+	"marketplace": 8.0, "bathhouse": 12.0, "academy": 18.0, "iron_foundry": 14.0, "smithing_bench": 6.0}
 const ROOFS := [Color(0.72, 0.62, 0.34), Color(0.66, 0.58, 0.30), Color(0.45, 0.30, 0.18), Color(0.70, 0.30, 0.22)]
 
 
@@ -968,6 +1005,8 @@ func _draw_building(sim: Sim, b: Building) -> void:
 	match b.type:
 		"lookout_perch", "war_drum_circle", "sling_platform", "ram_shed", "bastion", "catapult", "ballista_tower", "trebuchet":
 			_war_structure(sim, b, o, s, m)
+		"smithing_bench":
+			_smithing_bench(b, o, s, m)
 		"shaman_circle", "great_hearth", "flint_works", "stone_calendar", "marketplace", "bathhouse", "academy", "iron_foundry":
 			_bonus_structure(sim, b, o, s, m, era, roof)
 		"monolith":

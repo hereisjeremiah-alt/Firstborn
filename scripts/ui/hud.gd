@@ -60,6 +60,9 @@ func setup(g: Node) -> void:
 	_build_top_bar()
 	_build_feed()
 	_build_toolbar()
+	forge_ui = WeaponForge.new()
+	root.add_child(forge_ui)
+	forge_ui.setup(self, game)
 	_build_side_panel()
 	_build_info_panel()
 	_build_minimap()
@@ -276,6 +279,8 @@ func _panel_milestones() -> void:
 var planner: PanelContainer
 var planner_hint: Label
 var planner_roads: CheckBox
+var forge_ui: WeaponForge
+var toolbar_box: VBoxContainer
 
 
 func _build_planner() -> void:
@@ -776,9 +781,11 @@ func _build_toolbar() -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	tb.add_child(v)
+	toolbar_box = v
 	v.add_child(_button("Build  [B]", toggle_build_window, 112))
 	v.add_child(_button("Jobs  [J]", toggle_panel.bind("jobs"), 112))
 	v.add_child(_button("Research  [R]", toggle_panel.bind("research"), 112))
+	v.add_child(_button("Weapons  [K]", toggle_forge, 112))
 	v.add_child(_button("Stockpile  [I]", toggle_panel.bind("stock"), 112))
 	v.add_child(_button("Colony  [C]", toggle_panel.bind("colony"), 112))
 	v.add_child(_button("Clear Land [X]", func(): game.set_tool("" if game.tool_mode == "clear" else "clear"), 112))
@@ -836,7 +843,16 @@ func toggle_panel(which: String) -> void:
 	_rebuild_panel()
 
 
+func toggle_forge() -> void:
+	var open := not forge_ui.visible
+	close_panel()
+	if open:
+		forge_ui.toggle()
+
+
 func close_panel() -> void:
+	if forge_ui != null:
+		forge_ui.visible = false
 	research_layer.visible = false
 	build_layer.visible = false
 	if jobs_layer != null:
@@ -850,7 +866,7 @@ func close_panel() -> void:
 
 
 func is_panel_open() -> bool:
-	return side_panel.visible or research_layer.visible or build_layer.visible or settings_layer.visible or (trade_layer != null and trade_layer.visible) or (jobs_layer != null and jobs_layer.visible)
+	return (forge_ui != null and forge_ui.visible) or side_panel.visible or research_layer.visible or build_layer.visible or settings_layer.visible or (trade_layer != null and trade_layer.visible) or (jobs_layer != null and jobs_layer.visible)
 
 
 func _clear_body() -> void:
@@ -1455,7 +1471,7 @@ func _panel_stock() -> void:
 			s += "   %s: %d\n" % [Defs.item_name(m), int(c.count(m))]
 	if c.weapons_in_stock() > 0:
 		s += "\n[b]Weapons[/b]\n"
-		for w in Defs.WEAPON_ORDER:
+		for w in Defs.all_weapons():
 			if c.count(w) >= 0.5:
 				s += "   %s: %d\n" % [Defs.item_name(w), int(c.count(w))]
 	t.text = s
@@ -1622,6 +1638,15 @@ When someone is badly sick with something catching, your people may ask you to s
 
 [b]Trading distance[/b]
 Traders go up to 250 tiles (home to home); Trade Wagons add 200 more. Both can be changed in Game Rules.
+
+[b]Weapons (K)[/b]
+Research the Weaponsmithing Bench (Caveman Age) to design your own weapons in pixel art: paint the blade and the handle, pixel by pixel, in the materials you know. Weaponsmithing II, III and IV (one per age) unlock daggers, short swords, longswords and pikes, and stone, bronze and iron. Save a design, press Forge, and your smiths make it at the bench from stored materials. Custom weapons are used in fights between people, not for hunting.
+
+[b]Easy Birth[/b]
+With Easy Birth on (Game Rules, on by default) every woman has at least 2 children before 45, or 1 once the tribe has over 100 people. It waits while the tribe lacks housing.
+
+[b]Earth[/b]
+Choose "Earth" as the map when creating a world to play on today's continents.
 
 [b]War[/b]
 Killing someone of another tribe can start a war (60%; killing their leader, 90%). Tribes at war send an attack party at each other every month — without soldiers, a militia of able adults goes. Leaders never leave their own land. Kill an enemy's leader or burn their Capitol during a war and you conquer them: their people, goods, Talents and land become yours (and the same can happen to you!). Research armor in each age (Hide, Wicker & Leather, Bronze Scale, Iron Mail) to protect your fighters. Long wars wear your people down.
@@ -1881,8 +1906,8 @@ func _refresh_info() -> void:
 		if p.job == "soldier":
 			s += "[color=#ffb070]%s%s[/color]\n" % [Military.kind_name(p.soldier_kind), " (hired)" if p.hired else ""]
 		if p.weapon != "":
-			s += "Armed with: %s (%d damage%s)\n" % [Defs.WEAPONS[p.weapon]["name"], int(HumanAI.strike_damage(sim, p, false)),
-				", ranged" if float(Defs.WEAPONS[p.weapon]["range"]) > 2.0 else ""]
+			s += "Armed with: %s (%d damage%s)\n" % [Defs.weapon(p.weapon)["name"], int(HumanAI.strike_damage(sim, p, false)),
+				", ranged" if float(Defs.weapon(p.weapon)["range"]) > 2.0 else ""]
 		s += "Doing: %s\n" % p.state
 		if p.is_sick():
 			s += "[color=#ff8a7a]Ill: %s (%.1f days left)\n%s chance of death within %s[/color]\n" % [Defs.ILLNESS[p.illness["type"]]["name"], float(p.illness["days"]),
@@ -1982,21 +2007,24 @@ func _refresh_info() -> void:
 				"farm":
 					var st: String = ["Empty (plant in spring/summer)", "Growing %d%%" % int(b.crop_growth * 100.0), "Ready to harvest!"][b.crop_stage]
 					s += "Crop: %s\n" % st
-				"blacksmith":
+				"blacksmith", "smithing_bench":
 					var bc2 := sim.civ(b.civ_id)
 					if b.craft != "":
-						s += "Forging: %s (%d%%)\n" % [Defs.WEAPONS[b.craft]["name"], int(100.0 * b.craft_progress / float(Defs.WEAPONS[b.craft]["hours"]))]
+						s += "Forging: %s (%d%%)\n" % [Defs.weapon(b.craft)["name"], int(100.0 * b.craft_progress / float(Defs.weapon(b.craft)["hours"]))]
 					else:
 						s += "The forge is cold.\n"
 					var smiths := 0
 					for q in bc2.living():
 						if q.job == "smith":
 							smiths += 1
-					s += "Blacksmiths: %d   Auto-forge for unarmed soldiers: %s\n" % [smiths, "on" if b.auto_craft else "off"]
+					if b.type == "smithing_bench":
+						s += "Smiths: %d. This bench forges the weapons you design (Weapons window, K).\n" % smiths
+					else:
+						s += "Blacksmiths: %d   Auto-forge for unarmed soldiers: %s\n" % [smiths, "on" if b.auto_craft else "off"]
 					if not bc2.weapon_orders.is_empty():
 						var qn := PackedStringArray()
 						for w in bc2.weapon_orders:
-							qn.append(str(Defs.WEAPONS[w]["name"]))
+							qn.append(str(Defs.weapon(w)["name"]))
 						s += "Queued: %s\n" % ", ".join(qn)
 					if smiths == 0 and b.civ_id == 0:
 						s += "[color=#ffd27a]Give someone the Blacksmith job to forge weapons.[/color]\n"
@@ -2043,9 +2071,11 @@ func _refresh_info() -> void:
 					if b.type == "mercenary_hall":
 						for kind in ["warrior", "archer"]:
 							acts.append(["Hire %s (%d %s)" % [Military.kind_name(kind), Military.hire_cost(sim.colony, kind), Defs.MONEY_NAME], _on_hire_soldier.bind(kind)])
+				if b.type == "smithing_bench" and b.built:
+					acts.append(["Open the Weapons designer", toggle_forge])
 				if b.type == "blacksmith" and b.built:
 					for w in sim.colony.forgeable_weapons():
-						var wd: Dictionary = Defs.WEAPONS[w]
+						var wd: Dictionary = Defs.weapon(w)
 						acts.append(["Forge %s (%s)" % [wd["name"], Defs.cost_text(wd["cost"])], _on_forge.bind(w)])
 					acts.append(["Auto-forge: " + ("ON" if b.auto_craft else "OFF"), _on_toggle_auto_forge.bind(b.id)])
 				acts.append(["Cancel blueprint" if not b.built else "Demolish", _on_demolish])
@@ -2206,6 +2236,8 @@ func _build_pause_menu() -> void:
 
 
 func toggle_pause_menu() -> void:
+	if gameover_shown and not game.spectating and pause_layer.visible:
+		return          # pick spectate or leave first
 	if pause_layer.visible:
 		pause_layer.visible = false
 		game.menu_paused = false
@@ -2216,6 +2248,8 @@ func toggle_pause_menu() -> void:
 
 
 func _fill_pause_menu(message: String, page := "main") -> void:
+	if page == "main" and gameover_shown and not game.spectating:
+		page = "gameover"
 	for c in pause_box.get_children():
 		pause_box.remove_child(c)
 		c.queue_free()
@@ -2246,6 +2280,15 @@ func _fill_pause_menu(message: String, page := "main") -> void:
 		return
 	if page == "history":
 		_fill_history_page()
+		return
+	if page == "gameover":
+		pause_box.add_child(_label("Your tribe has perished", 24, Color(1.0, 0.6, 0.5)))
+		pause_box.add_child(_label("It lasted %d days. The rest of the world goes on." % game.sim.time.day(), 14, Color(0.85, 0.82, 0.74)))
+		pause_box.add_child(HSeparator.new())
+		pause_box.add_child(_button("Keep watching the world (spectate)", start_spectating))
+		pause_box.add_child(_button("World History", _fill_pause_menu.bind("", "history")))
+		pause_box.add_child(_button("Load Game…", _fill_pause_menu.bind("", "load")))
+		pause_box.add_child(_button("Main Menu", Callable(game, "go_main_menu")))
 		return
 	pause_box.add_child(_label("Game Menu", 22, Color(1.0, 0.85, 0.5)))
 	if message != "":
@@ -2315,9 +2358,26 @@ func show_game_over() -> void:
 	if gameover_shown:
 		return
 	gameover_shown = true
-	_fill_pause_menu("Your tribe has perished after %d days. Load a save or start a new world." % game.sim.time.day())
+	_fill_pause_menu("", "gameover")
 	pause_layer.visible = true
 	game.menu_paused = true
+
+
+## After your tribe is gone you may keep watching the world go on, without taking part.
+func start_spectating() -> void:
+	game.spectating = true
+	pause_layer.visible = false
+	game.menu_paused = false
+	close_panel()
+	if planner.visible:
+		planner.visible = false
+	game.set_tool("")
+	game.cancel_build()
+	var keep := ["World Map [M]", "Help  [H]", "Menu  [Esc]"]
+	for b in toolbar_box.get_children():
+		if b is Button and not keep.has((b as Button).text):
+			b.visible = false
+	push_event("Spectating: the world goes on without your tribe. You can watch, but not act. (Esc for the menu)", "major")
 
 
 # ================================================================ start picker
@@ -2447,7 +2507,7 @@ func _refresh_top() -> void:
 func _on_forge(w: String) -> void:
 	var c: Colony = game.sim.colony
 	c.weapon_orders.append(w)
-	push_event("Queued at the blacksmith: %s. Smiths take the materials from storage when they start." % Defs.WEAPONS[w]["name"], "info")
+	push_event("Queued at the blacksmith: %s. Smiths take the materials from storage when they start." % Defs.weapon(w)["name"], "info")
 	_actions_sig = ""
 
 

@@ -176,6 +176,12 @@ static func send_party(sim: Sim, c: Colony, target: Colony) -> int:
 		return 0
 	var sent := 0
 	for q in party:
+		if q.weapon == "":
+			# militia take up whatever is in the armoury (custom designs too)
+			var w := c.best_stock_weapon("warrior")
+			if w != "":
+				c.take(w, 1)
+				q.weapon = w
 		if HumanAI.order_raid(sim, q, target.civ_id, HumanAI.PRIO_RAID):
 			sent += 1
 	if sent == 0:

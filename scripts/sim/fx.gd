@@ -68,7 +68,7 @@ static func smash(sim: Sim, at: Vector2, from: Vector2) -> void:
 static func style_of(p: Human) -> Array:
 	if p.weapon == "":
 		return ["blunt", Color(0.9, 0.86, 0.78)]
-	var wd: Dictionary = Defs.WEAPONS[p.weapon]
+	var wd: Dictionary = Defs.weapon(p.weapon)
 	var metal: Color = [Color(0.7, 0.68, 0.62), Color(0.7, 0.68, 0.62), Color(0.95, 0.70, 0.35), Color(0.85, 0.88, 0.94)][int(wd["era"])]
 	var n := str(wd["name"]).to_lower()
 	if float(wd["range"]) > 2.0 or n.contains("spear") or n.contains("javelin") or n.contains("pike"):

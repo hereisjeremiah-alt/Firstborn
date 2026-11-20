@@ -81,7 +81,7 @@ static func hire(sim: Sim, c: Colony, kind: String) -> Human:
 	p.skills = {"soldier": sim.rng.randf_range(3.0, 6.0)}
 	p.clothed = true
 	sim.notify(c.civ_id, "%s, a hired %s with a %s, joins your tribe." % [p.name, kind_name(kind).to_lower(),
-		Defs.WEAPONS[p.weapon]["name"].to_lower() if p.weapon != "" else "bare fists"], "good")
+		Defs.weapon(p.weapon)["name"].to_lower() if p.weapon != "" else "bare fists"], "good")
 	return p
 
 

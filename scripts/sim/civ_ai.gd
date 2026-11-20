@@ -157,7 +157,7 @@ static func desired_jobs(sim: Sim, c: Colony, n: int) -> Dictionary:
 		for q in c.soldiers():
 			if q.weapon == "":
 				unarmed += 1
-		want["smith"] = 1 if unarmed > 0 or n >= 10 or war else 0
+		want["smith"] = 1 if unarmed > 0 or n >= 10 or war or not c.weapon_orders.is_empty() else 0
 	return want
 
 

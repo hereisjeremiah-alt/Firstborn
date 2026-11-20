@@ -20,6 +20,7 @@ var lights := {}            # building id -> PointLight2D
 var speed := 1.0
 var paused := false
 var menu_paused := false
+var spectating := false      # the player's tribe is gone: watch only
 var picking := false        # choosing where the tribe starts
 var reveal_all := true      # all tribes are shown on maps (flags are visible from above)
 var selected_human_id := -1
@@ -54,6 +55,8 @@ func _ready() -> void:
 	for a in _args:
 		if a.begins_with("--seed="):
 			Config.seed_value = int(a.substr(7))
+		if a == "--earth":
+			Config.earth_mode = true
 	var loading_layer := CanvasLayer.new()
 	add_child(loading_layer)
 	var lbl := Label.new()
@@ -83,7 +86,7 @@ func _ready() -> void:
 			loaded = true
 			_pending_events.append(["Game loaded. Welcome back.", "good"])
 	if not loaded:
-		sim.new_world(Config.seed_value, Config.world_size)
+		sim.new_world(Config.seed_value, Config.world_size, Config.earth_mode)
 	_build_scene(cam_data)
 	loading_layer.queue_free()
 	_ready_done = true
@@ -93,6 +96,10 @@ func _ready() -> void:
 		_autotest()
 	elif _args.has("--shots"):
 		_shots()
+	elif _args.has("--earthshots"):
+		_earth_shots()
+	elif _args.has("--forgeshot"):
+		_forge_shot()
 	elif _args.has("--cmdtest"):
 		_cmdtest()
 
@@ -231,7 +238,7 @@ func _process(delta: float) -> void:
 	resources.modulate.a = clampf((z - 0.55) / 0.5, 0.0, 1.0)
 	_update_lights()
 	order_marker_t = maxf(0.0, order_marker_t - delta * 1.5)
-	if sim.started and sim.colony.population() == 0:
+	if sim.started and (sim.colony.population() == 0 or sim.colony.collapsed) and not spectating:
 		hud.show_game_over()
 
 
@@ -312,6 +319,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		if (k.ctrl_pressed or k.meta_pressed) and k.keycode == KEY_Y:
 			plan_redo()
 			return
+		if spectating and not k.keycode in [KEY_ESCAPE, KEY_SPACE, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_M, KEY_H, KEY_F9]:
+			return
 		match k.keycode:
 			KEY_ESCAPE:
 				if tool_mode != "":
@@ -361,6 +370,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_Z:
 				if not picking:
 					hud.toggle_planner()
+			KEY_K:
+				hud.toggle_forge()
 			KEY_G:
 				hud.toggle_panel("milestones")
 			KEY_F5:
@@ -373,6 +384,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if menu_paused:
 		return
+	if spectating and event is InputEventMouseButton and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		return                   # watching only: no selecting, ordering or building
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		var gmp := get_global_mouse_position()
@@ -919,6 +932,90 @@ func _lumber_test(i: int) -> void:
 				lb = q
 		print("LT t%d lumberer=%s carry=%s sticks=+%d stumps=%d logs=%d road_stump_back=%s" % [i, lb.state if lb != null else "-", lb.carrying if lb != null else {}, int(c.count("sticks") - float(_nt["sticks0"])),
 			sim.stumps.size(), int(c.count("log")), str(sim.world.res_type[int(_nt.get("road_stump", 0))] != Defs.R.NONE)])
+
+
+## Round H: custom weapons, Easy Birth, spectating, Earth: `-- --autotest --htest [--earth]`
+var _ht := {}
+func _h_test(i: int) -> void:
+	var c := sim.colony
+	if i == 2:
+		if sim.world.earth:
+			var counts := {}
+			for t in sim.world.terrain:
+				var nm: String = Defs.TERRAIN[t]["name"]
+				counts[nm] = int(counts.get(nm, 0)) + 1
+			print("HT earth %dx%d: %s" % [sim.world.w, sim.world.h, counts])
+			for place in [["London", 51.5, -0.1], ["Cairo", 30.0, 31.2], ["Amazon", -3.0, -60.0], ["Sahara", 23.0, 10.0], ["Himalaya", 28.0, 86.0], ["Siberia", 62.0, 100.0], ["Caspian", 42.0, 50.5], ["Atlantic", 30.0, -40.0], ["Iowa", 42.0, -93.5], ["Outback", -25.0, 132.0], ["Greenland", 75.0, -40.0]]:
+				var q := EarthGen.latlon_to_tile(sim.world, place[1], place[2])
+				print("HT  %s -> %s" % [place[0], Defs.TERRAIN[sim.world.t_at(q)]["name"]])
+			print("HT tribes at: ", sim.colonies.map(func(o): return EarthGen.tile_to_latlon(sim.world, o.home).round()))
+		# a custom weapon: design, save, forge, use
+		c.researched["smithing_bench"] = true
+		var d := Smithing.starter("spear")
+		var id := Smithing.save_design(sim, d)
+		print("HT design ", id, " ", Defs.weapon(id))
+		var bad := Smithing.starter("longsword")
+		print("HT longsword needs level ", Smithing.evaluate(bad)["level"], " we have ", Smithing.level(c))
+		for k in ["wood", "stone", "hides", "bones"]:
+			c.add(k, 50)
+		var site := CivAI.find_site(sim, c, "smithing_bench")
+		var b := sim.place_building(c, "smithing_bench", site)
+		sim.finish_building(b)
+		c.weapon_orders.append(id)
+		c.weapon_orders.append(id)
+		for k in 3:
+			sim._make_human(c, "M" if k % 2 == 0 else "F", (22.0 + k) * Defs.AGE_YEAR_DAYS, sim.world.center_of(c.home) + Vector2(k * 4, 6))
+		var sm: Human = c.living().filter(func(q): return q.is_adult())[0]
+		sm.job = "smith"
+		_ht["id"] = id
+		_ht["smith"] = sm.id
+		# Easy Birth: every woman in the world, followed over time
+		_ht["women"] = {}
+	if i == 17:
+		print("HT game over shown=%s" % hud.gameover_shown)
+		hud.start_spectating()
+		print("HT spectating=%s, visible tool buttons=%s" % [spectating, hud.toolbar_box.get_children().filter(func(b): return b.visible).map(func(b): return b.text)])
+	if i == 18:
+		print("HT world still running after the end: day %d, tribes alive %d" % [sim.time.day(), sim.colonies.filter(func(o): return not o.collapsed and not o.bandit and o.population() > 0).size()])
+	if i >= 3 and i % 3 == 0:
+		var id2 := str(_ht.get("id", ""))
+		var owed := 0
+		var due := 0
+		var women := 0
+		var births := 0
+		for oc in sim.colonies:
+			if oc.collapsed or oc.bandit:
+				continue
+			for q in oc.living():
+				if q.gender == "F" and q.age_years() >= 18.0:
+					women += 1
+					if q.pregnant_days >= 0.0:
+						_ht["preg"] = int(_ht.get("preg", 0)) + 1
+					births += q.births
+					if q.births < Survival.easy_birth_required(oc) and q.age_years() < 45.0:
+						owed += 1
+						if Survival.easy_birth_due(oc, q, oc.population(), oc.housing()):
+							due += 1
+		var pops := sim.colonies.filter(func(o): return not o.collapsed and not o.bandit).map(func(o): return o.population())
+		var sm2 := sim.person(int(_ht.get("smith", -1)))
+		print("HT t%d: stock of %s = %d, orders %d, smith=%s | women %d, births %d, owed %d (due %d) pregnant-samples %d | pops %s" % [i, id2, int(c.count(id2)), c.weapon_orders.size(),
+			sm2.state if sm2 != null else "-", women, births, owed, due, int(_ht.get("preg", 0)), pops])
+		_ht["preg"] = 0
+		if i == 9 and c.count(id2) >= 1.0:
+			# arm a fighter and check damage against a person and an animal
+			var f: Human = c.living().filter(func(q): return q.is_adult())[0]
+			c.take(id2, 1)
+			f.weapon = id2
+			print("HT armed %s: vs people %.1f, vs animals %.1f (unarmed vs animals %.1f), reach %.2f" % [f.name, HumanAI.strike_damage(sim, f, false),
+				HumanAI.strike_damage(sim, f, true), 10.0 + f.skill("hunter") + c.bonus("hunt_dmg"), HumanAI.weapon_reach(f)])
+		if i == 15:
+			for q in c.living():
+				sim.kill(q, "test")
+		if i == 12:
+			save_slot(5)
+			var s2 := Sim.new()
+			s2.from_dict(SaveSystem.load_data(5))
+			print("HT reload: earth=%s size %dx%d designs=%d weapon name=%s" % [s2.world.earth, s2.world.w, s2.world.h, s2.custom_weapons.size(), Defs.weapon(id2)["name"]])
 
 
 ## Round G: presets, killings and war, monthly war parties, conquest, leaders at home, leader
@@ -1655,6 +1752,8 @@ func _autotest() -> void:
 			_f_test(i)
 		if _args.has("--gtest"):
 			_g_test(i)
+		if _args.has("--htest"):
+			_h_test(i)
 		if _args.has("--raidtest") and i == 2:
 			_raid_setup()
 		if _args.has("--raidtest") and i > 2:
@@ -1717,6 +1816,39 @@ func _autotest() -> void:
 
 
 ## Renders screenshots for visual checks: `godot res://scenes/game.tscn -- --shots`
+func _forge_shot() -> void:
+	use_suggested_start()
+	await get_tree().create_timer(1.0).timeout
+	var c := sim.colony
+	c.researched["smithing_bench"] = true
+	c.researched["weaponsmithing"] = true
+	c.researched["weaponsmithing_3"] = true
+	for t in ["spear", "knife", "short_sword"]:
+		Smithing.save_design(sim, Smithing.starter(t))
+	hud.toggle_forge()
+	hud.forge_ui._on_type("short_sword")
+	hud.forge_ui._on_template()
+	await _snap("/tmp/shots/44_weapons.png", 1.0)
+	get_tree().quit()
+
+
+## Pictures of the Earth mode: `-- --earth --earthshots`
+func _earth_shots() -> void:
+	var dir := "/tmp/shots"
+	DirAccess.make_dir_recursive_absolute(dir)
+	use_suggested_start()
+	set_speed(1.0)
+	for i in 3:
+		await get_tree().create_timer(1.0).timeout
+	hud.toggle_worldmap()
+	await _snap(dir + "/46_earth_map.png", 1.0)
+	hud.toggle_worldmap()
+	for spot in [["47_earth_nile", 27.0, 31.5], ["48_earth_alps", 46.5, 9.5]]:
+		camera.position = sim.world.center_of(EarthGen.latlon_to_tile(sim.world, spot[1], spot[2]))
+		await _snap(dir + "/%s.png" % spot[0], 0.35)
+	get_tree().quit()
+
+
 func _shots() -> void:
 	var dir := "/tmp/shots"
 	DirAccess.make_dir_recursive_absolute(dir)
@@ -2173,6 +2305,28 @@ func _military_shots(dir: String) -> void:
 	hud.toggle_planner()
 	await _snap(dir + "/39_planner.png", 1.2)
 	hud.toggle_planner()
+	# --- the Weapons designer with a few designs, and a Billy holding one
+	for t in Smithing.LEVEL_TECHS:
+		c.researched[t] = true
+	var ids: Array = []
+	for t in ["spear", "short_sword", "longsword"]:
+		var dsn := Smithing.starter(t)
+		if t == "short_sword":
+			for k in dsn["handle"].size():
+				if int(dsn["handle"][k]) > 0 and k > 9:
+					dsn["handle"][k] = Smithing.code(11, (k % 3))      # gold-wrapped grip
+		ids.append(Smithing.save_design(sim, dsn))
+	hud.toggle_forge()
+	hud.forge_ui._on_type("short_sword")
+	hud.forge_ui._on_template()
+	hud.forge_ui.name_edit.text = "Sun Blade"
+	await _snap(dir + "/44_weapons.png", 1.0)
+	hud.toggle_forge()
+	var holder: Human = c.living()[0]
+	holder.weapon = ids[1]
+	holder.job = "soldier"
+	camera.position = holder.pos
+	await _snap(dir + "/45_custom_weapon_held.png", 4.0)
 	# --- roads on the world map, in each tribe's colour
 	for oc in sim.colonies:
 		if oc.collapsed or oc.bandit:

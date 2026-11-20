@@ -472,3 +472,14 @@ Tuning lives almost entirely in `scripts/world/defs.gd`. That includes day lengt
 - **Armor** (Military row): Hide Armor, Wicker Shields & Leather, Bronze Scale Armor, Iron Mail. Each tier cuts the damage soldiers and war-party fighters take, and fighters show it.
 - **War weariness**: long wars lower the tribe's mood; conquests raise it.
 - **Unanswered questions**: if you don't answer a passage request, trade/alliance/tribute/land offer, newcomers or a sick-person question within 30 seconds of play, your leader decides. A countdown shows on each card.
+
+## Round H additions
+
+- **Weapons designer (K)**: research the *Weaponsmithing Bench* (Caveman Age) and design weapons in pixel art, painting the blade/head and the hilt/handle pixel by pixel.
+  - Weaponsmithing I–IV (one per age) unlock types: Knife and Spear, then Dagger, Short Sword, Longsword and Pike.
+  - They also unlock materials: flint, bone, wood, hide and ochre; then obsidian, ground stone and antler; then copper, bronze and gold; then iron.
+  - Damage, reach, forging time and material cost come from the drawing.
+  - Smiths forge saved designs at the bench. Soldiers and war-party militia take them up. They work only in fights between people.
+- **Easy Birth** (Game Rules + a switch on the new-world page, on by default): every woman has at least 2 children before 45 (1 once her tribe has over 100 people). Hunger, season and empty stores don't stop it. It waits while the tribe lacks housing. Women still owed a child are paired first.
+- **Spectate**: when your tribe perishes you can keep watching the world (no orders, building or selecting) or go to the main menu.
+- **Earth map**: a new map choice with today's continents, seas, big lakes, mountain ranges, deserts, rainforests and 38 great rivers, from 80°N to 56°S. Made by `tools/make_earth.py` into `data/earth.png` / `data/earth.json`.

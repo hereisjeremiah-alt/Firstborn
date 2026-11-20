@@ -7,7 +7,8 @@ var world_size := 384
 var load_slot := -1      # >= 0 means "load this save slot instead of starting a new world"
 var tribe_name := "Your Tribe"
 var ai_tribes := 4      # rival AI civilizations
-var fog_of_war := false # the map starts hidden; your Billies uncover it
+var fog_of_war := false
+var earth_mode := false # play on a map of today's Earth (EarthGen) # the map starts hidden; your Billies uncover it
 
 # ---------------------------------------------------------------- custom rules
 ## [key, label, min, max, step, default, format, group, help]
@@ -21,6 +22,7 @@ const RULES := [
 	["aging_speed", "Aging speed (adults)", 0.25, 4.0, 0.05, 1.0, "x", "People", "How fast adults grow old. 1x = one life year every 40 days."],
 	["child_growth", "Child growth speed", 1.0, 8.0, 0.5, 3.0, "x", "People", "How much faster children age than adults."],
 	["consent_age", "Age of consent (partners & children)", 18.0, 21.0, 1.0, 18.0, "d", "People", "The youngest age at which Billies may become partners and have children (18 to 21)."],
+	["easy_birth", "Easy Birth", 0.0, 1.0, 1.0, 1.0, "b", "People", "Every woman gives birth at least twice before 45 (once, when her tribe has more than 100 people). Doesn't apply while the tribe lacks housing. Keeps young tribes from dying out."],
 	["allow_kin", "Partners within the family", 0.0, 1.0, 1.0, 1.0, "b", "People", "Lets close relatives (siblings, parent and child) become partners. Unrelated partners are still preferred."],
 	["kin_frailty", "Frailty of children of close kin", 0.0, 1.0, 0.05, 0.3, "%", "People", "Chance a child of close relatives is born frail: weaker at work and likelier to die of illness."],
 	["work_age", "Age children start working", 3.0, 16.0, 1.0, 6.0, "d", "People", "Life years before children take jobs."],

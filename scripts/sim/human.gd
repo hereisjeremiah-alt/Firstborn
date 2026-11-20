@@ -25,6 +25,7 @@ var immunities: Array = []
 var race := 0             # index into Config.races
 var weapon := ""          # soldiers: weapon item carried (Defs.WEAPONS)   # lifelong immunities (e.g. measles survivors)
 var pregnant_days := -1.0
+var births := 0            # children this woman has given birth to (Easy Birth)
 var alive := true
 var cause := ""
 var soldier_kind := "warrior"   # soldiers: "warrior" (close combat) or "archer" (ranged)
@@ -175,7 +176,7 @@ func to_dict() -> Dictionary:
 		"hunger": hunger, "thirst": thirst, "energy": energy, "warmth": warmth, "skills": skills.duplicate(),
 		"job": job, "partner": partner_id, "father": father_id, "mother": mother_id,
 		"children": children.duplicate(), "illness": illness.duplicate(), "cond": conditions.duplicate(), "immune": immune_days, "immunities": immunities.duplicate(), "race": race, "weapon": weapon,
-		"pregnant": pregnant_days, "alive": alive, "cause": cause, "x": pos.x, "y": pos.y,
+		"pregnant": pregnant_days, "births": births, "alive": alive, "cause": cause, "x": pos.x, "y": pos.y,
 		"carrying": carrying.duplicate(), "bed": bed_id, "clothed": clothed, "aboard": aboard, "frail": frail, "skind": soldier_kind, "hired": hired, "drafted": drafted,
 	}
 
@@ -205,6 +206,7 @@ static func from_dict(d: Dictionary) -> Human:
 	p.race = int(d.get("race", 0))
 	p.weapon = str(d.get("weapon", ""))
 	p.pregnant_days = float(d.get("pregnant", -1.0))
+	p.births = int(d.get("births", 0))
 	p.alive = bool(d.get("alive", true))
 	p.cause = str(d.get("cause", ""))
 	p.pos = Vector2(float(d["x"]), float(d["y"]))

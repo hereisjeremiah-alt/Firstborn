@@ -341,7 +341,7 @@ func best_wall_tier() -> int:
 func forgeable_weapons() -> Array:
 	var out: Array = []
 	for w in Defs.WEAPON_ORDER:
-		if int(Defs.WEAPONS[w]["era"]) <= era_i:
+		if int(Defs.weapon(w)["era"]) <= era_i:
 			out.append(w)
 	return out
 
@@ -352,9 +352,9 @@ func best_stock_weapon(kind := "warrior") -> String:
 	var ranged := kind == "archer"
 	var best := ""
 	var best_v := -1.0
-	for w in Defs.WEAPON_ORDER:
+	for w in Defs.all_weapons():
 		if count(w) >= 1.0 and Defs.weapon_ranged(w) == ranged:
-			var wd: Dictionary = Defs.WEAPONS[w]
+			var wd: Dictionary = Defs.weapon(w)
 			var v := float(wd["dmg"]) + float(wd["range"]) * 0.5
 			if v > best_v:
 				best_v = v
@@ -364,7 +364,7 @@ func best_stock_weapon(kind := "warrior") -> String:
 
 func weapons_in_stock() -> int:
 	var n := 0
-	for w in Defs.WEAPON_ORDER:
+	for w in Defs.all_weapons():
 		n += int(count(w))
 	return n
 
@@ -378,6 +378,8 @@ func soldiers(kind := "") -> Array:
 
 
 func job_allowed(job: String) -> bool:
+	if job == "smith":
+		return has_built("blacksmith") or has_built("smithing_bench")
 	if job == "soldier":
 		return has_built("training_camp") or has_built("mercenary_hall")
 	return not Defs.JOB_NEEDS.has(job) or has_built(Defs.JOB_NEEDS[job])

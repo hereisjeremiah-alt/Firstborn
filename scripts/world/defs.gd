@@ -173,7 +173,7 @@ const BUILD_CATEGORIES := [
 	["Storage & Industry", ["storage", "lumber_yard", "mine", "workshop", "blacksmith", "harbor"]],
 	["Bonus Buildings", ["shaman_circle", "great_hearth", "flint_works", "stone_calendar", "marketplace", "bathhouse", "academy", "iron_foundry"]],
 	["Knowledge & Civic", ["research_table", "healer_hut", "monolith", "map_table", "capitol"]],
-	["Defense & Military", ["fence", "wall", "gate", "lookout_perch", "sling_platform", "watchtower", "bastion", "arrow_tower", "ballista_tower",
+	["Defense & Military", ["smithing_bench", "fence", "wall", "gate", "lookout_perch", "sling_platform", "watchtower", "bastion", "arrow_tower", "ballista_tower",
 		"training_camp", "mercenary_hall", "war_drum_circle", "ram_shed", "catapult", "trebuchet"]],
 ]
 
@@ -285,6 +285,8 @@ const BUILDINGS := {
 		"research": 0.2, "train": 0.15, "desc": "Bonus. Scholars and teachers: research 20% faster, soldiers train 15% faster. Counts up to 2."},
 	"iron_foundry": {"name": "Iron Foundry", "size": Vector2i(3, 2), "cost": {"stone": 120, "wood": 100, "iron_ore": 12}, "work": 120.0, "housing": 0, "tech": "foundries", "max": 2,
 		"work_smith": 0.3, "work_miner": 0.15, "soldier": 0.05, "desc": "Bonus. Bloomeries and big forges: smiths 30% faster, miners 15%, better-made arms. Counts up to 2."},
+	"smithing_bench": {"name": "Weaponsmithing Bench", "size": Vector2i(2, 2), "cost": {"wood": 12, "stone": 8}, "work": 18.0, "housing": 0, "tech": "smithing_bench",
+		"desc": "Smiths forge the weapons you design in the Weapons window (K). Custom weapons are used in fights between people."},
 	"lookout_perch": {"name": "Rock Lookout", "size": Vector2i(1, 1), "cost": {"wood": 6, "stone": 8}, "work": 12.0, "housing": 0, "guard": 6.0, "tech": "lookout_perches",
 		"hp": 120, "shoots": {"range": 6.0, "dmg": 5.0, "cd": 2.5, "ammo": "rock"}, "desc": "Defense. A watcher on a log perch throws rocks at enemies at war and predators within 6 tiles."},
 	"war_drum_circle": {"name": "War Drum Circle", "size": Vector2i(2, 2), "cost": {"wood": 10, "hides": 3}, "work": 15.0, "housing": 0, "tech": "war_drums",
@@ -339,8 +341,32 @@ const SOLDIER_KINDS := {
 }
 
 
+## Weapons the player designed at the Weaponsmithing Bench (id -> same fields as WEAPONS,
+## plus "custom": true). Filled from the save by Smithing.
+static var CUSTOM := {}
+
+
+static func weapon(id: String) -> Dictionary:
+	if WEAPONS.has(id):
+		return WEAPONS[id]
+	if CUSTOM.has(id):
+		return CUSTOM[id]
+	return {"name": "Lost weapon", "era": 0, "dmg": 8.0, "range": 1.3, "hours": 3.0, "cost": {}}
+
+
+static func is_weapon(id: String) -> bool:
+	return WEAPONS.has(id) or CUSTOM.has(id)
+
+
+## The standard weapons and every custom design.
+static func all_weapons() -> Array:
+	var out: Array = WEAPON_ORDER.duplicate()
+	out.append_array(CUSTOM.keys())
+	return out
+
+
 static func weapon_ranged(w: String) -> bool:
-	return w != "" and float(WEAPONS[w]["range"]) > 2.0
+	return w != "" and float(weapon(w)["range"]) > 2.0
 
 
 ## Best weapon of a kind a tribe of this age can field (hired soldiers arrive with it).
@@ -348,7 +374,7 @@ static func best_weapon_for(kind: String, era: int) -> String:
 	var best := ""
 	var bv := -1.0
 	for w in WEAPON_ORDER:
-		var wd: Dictionary = WEAPONS[w]
+		var wd: Dictionary = weapon(w)
 		if int(wd["era"]) > era or weapon_ranged(w) != bool(SOLDIER_KINDS[kind]["ranged"]):
 			continue
 		var v := float(wd["dmg"]) + float(wd["range"]) * 0.5
@@ -407,6 +433,7 @@ const TECH_ORDER := [
 	"apothecary", "iron_weapons", "iron_armor", "iron_arrowheads", "iron_smelting", "bellows",
 	"iron_tool_kits", "galleys", "sea_charts", "reinforced_hulls",
 	"spirit_lore", "communal_hearths", "knapping_floors", "sky_watching", "marketplaces", "public_baths", "scholarship", "foundries",
+	"smithing_bench", "weaponsmithing_3", "weaponsmithing_4",
 	"hide_armor", "wicker_shields", "bronze_scale", "iron_mail",
 	"lookout_perches", "war_drums",
 	"weaponsmithing", "warrior_training", "defensive_perimeters", "mercenary_pacts", "sling_platforms", "battering_rams",
@@ -505,7 +532,14 @@ const TECHS := {
 	"catapults": {"name": "Catapults", "era": 2, "kind": "Military", "cost": {"points": 0, "wood": 30, "copper_ore": 3}, "fx": {}, "unlocks": ["catapult"], "desc": "Unlocks the Catapult: hurls boulders at enemy buildings and warriors up to 14 tiles away."},
 	"ballistae": {"name": "Ballistae", "era": 3, "kind": "Military", "cost": {"points": 0, "iron_ore": 5}, "fx": {}, "unlocks": ["ballista_tower"], "desc": "Unlocks the Ballista Tower: giant iron-tipped bolts at enemies within 13 tiles."},
 	"trebuchets": {"name": "Trebuchets", "era": 3, "kind": "Military", "cost": {"points": 0, "wood": 40, "iron_ore": 5}, "fx": {}, "unlocks": ["trebuchet"], "desc": "Unlocks the Trebuchet: smashes enemy buildings up to 20 tiles away."},
-	"weaponsmithing": {"name": "Weaponsmithing", "era": 1, "kind": "Military", "cost": {"points": 0, "stone": 10}, "fx": {}, "unlocks": ["blacksmith"], "desc": "Unlocks the Blacksmith, which forges weapons for soldiers."},
+	"smithing_bench": {"name": "Weaponsmithing Bench", "era": 0, "kind": "Military", "cost": {"points": 40, "stone": 6, "wood": 6}, "fx": {}, "unlocks": ["smithing_bench"],
+		"desc": "Weaponsmithing I. Unlocks the Weaponsmithing Bench and the Weapons designer (K): draw your own knives and spears in flint, bone, wood and hide."},
+	"weaponsmithing": {"name": "Weaponsmithing II", "era": 1, "kind": "Military", "cost": {"points": 0, "stone": 10}, "fx": {}, "unlocks": ["blacksmith"],
+		"desc": "Unlocks the Blacksmith, which forges weapons for soldiers. In the Weapons designer: daggers, obsidian, ground stone and antler."},
+	"weaponsmithing_3": {"name": "Weaponsmithing III", "era": 2, "kind": "Military", "cost": {"points": 0, "copper_ore": 4, "tin_ore": 2}, "fx": {}, "unlocks": [],
+		"desc": "In the Weapons designer: short swords, copper, bronze and gold inlay."},
+	"weaponsmithing_4": {"name": "Weaponsmithing IV", "era": 3, "kind": "Military", "cost": {"points": 0, "iron_ore": 6}, "fx": {}, "unlocks": [],
+		"desc": "In the Weapons designer: longswords, pikes and iron."},
 	"warrior_training": {"name": "Warrior Training", "era": 1, "kind": "Military", "cost": {"points": 0}, "fx": {"fight": 2.0}, "unlocks": ["training_camp"], "desc": "Unlocks the Training Camp. Only there can people become Soldiers."},
 	"defensive_perimeters": {"name": "Defensive Perimeters", "era": 1, "kind": "Military", "cost": {"points": 0, "wood": 20}, "fx": {}, "unlocks": ["wall", "gate"], "desc": "Walls and gates. Your people start building a wooden palisade around the village."},
 	"mercenary_pacts": {"name": "Mercenary Pacts", "era": 1, "kind": "Military", "cost": {"points": 0, "hides": 4}, "fx": {}, "unlocks": ["mercenary_hall"], "desc": "Unlocks the Mercenary Hall: hire Warriors and Archers for Talents."},
@@ -680,6 +714,8 @@ static func tech_materials(id: String) -> Dictionary:
 
 
 static func item_name(item: String) -> String:
+	if CUSTOM.has(item):
+		return str(CUSTOM[item]["name"])
 	return ITEM_NAMES.get(item, item.capitalize())
 
 

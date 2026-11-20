@@ -61,6 +61,8 @@ var play_secs := 0.0            # real seconds played while unpaused (diplomacy 
 var diplo_cd := {}              # "a>b:kind" -> play_secs when that request may be made again
 var stumps := {}                # tile index -> [tree type, sim day felled]: trees that will grow back
 var road_tiles := {}            # tile index -> civ id of the tribe that built it
+var custom_weapons := {}        # id -> the player's weapon designs (Smithing)
+var custom_weapon_seq := 0
 var war_month := -1             # calendar month of the last war-party muster (Warfare)
 var shared_road_tiles := 0      # road tiles allies laid for each other (tests)
 var road_version := 0           # bumped whenever a road is laid or taken up (maps redraw)
@@ -72,8 +74,10 @@ var land_scale := 1.0           # wildlife numbers scale with the amount of land
 
 # ================================================================ setup
 ## Generates the world and its wildlife. Tribes are founded later with found_tribes().
-func new_world(seed_value: int, size: int) -> void:
-	world = WorldGen.generate(seed_value, size)
+func new_world(seed_value: int, size: int, earth := false) -> void:
+	world = EarthGen.generate(seed_value, size) if earth else WorldGen.generate(seed_value, size)
+	world.gen_size = size
+	Smithing.install_all(self)
 	paths = Pathfinder.new()
 	paths.setup(world)
 	_setup_sea()
@@ -1414,7 +1418,7 @@ func military_strength(c: Colony) -> float:
 	var v := 0.0
 	for p in c.living():
 		if p.job == "soldier":
-			v += 3.0 + (float(Defs.WEAPONS[p.weapon]["dmg"]) / 6.0 if p.weapon != "" else 0.0) + p.skill("soldier") * 0.5
+			v += 3.0 + (float(Defs.weapon(p.weapon)["dmg"]) / 6.0 if p.weapon != "" else 0.0) + p.skill("soldier") * 0.5
 		elif p.is_adult():
 			v += 0.5
 	for b in c.buildings:
@@ -1689,6 +1693,7 @@ func give_birth(mother: Human) -> void:
 	var father := person(mother.partner_id)
 	var g := "M" if rng.randf() < 0.5 else "F"
 	var baby := _make_human(c, g, 0.0, mother.pos + Vector2(4, 2))
+	mother.births += 1
 	baby.mother_id = mother.id
 	baby.father_id = father.id if father != null else -1
 	baby.job = "child"
@@ -1784,7 +1789,8 @@ func to_dict() -> Dictionary:
 	for c in colonies:
 		cols.append(c.to_dict())
 	return {
-		"version": 3, "seed": world.seed_value, "size": world.w, "time": time.t, "skip_days": time.skip_days, "cal_scale": time.scale,
+		"version": 3, "seed": world.seed_value, "size": world.gen_size if world.gen_size > 0 else world.w, "earth": world.earth,
+		"custom_weapons": custom_weapons.duplicate(true), "custom_weapon_seq": custom_weapon_seq, "time": time.t, "skip_days": time.skip_days, "cal_scale": time.scale,
 		"weather": weather.to_dict(), "colonies": cols, "animals": an,
 		"contacts": contacts.keys(), "relations": relations.duplicate(), "wars": wars.duplicate(true),
 		"config": Config.to_dict(), "state_owner": Array(states.owners),
@@ -1799,7 +1805,14 @@ func to_dict() -> Dictionary:
 func from_dict(d: Dictionary) -> void:
 	if d.has("config"):
 		Config.from_dict(d["config"])
-	world = WorldGen.generate(int(d["seed"]), int(d["size"]))
+	if bool(d.get("earth", false)):
+		world = EarthGen.generate(int(d["seed"]), int(d["size"]))
+	else:
+		world = WorldGen.generate(int(d["seed"]), int(d["size"]))
+	world.gen_size = int(d["size"])
+	custom_weapons = d.get("custom_weapons", {})
+	custom_weapon_seq = int(d.get("custom_weapon_seq", 0))
+	Smithing.install_all(self)
 	world.res_type = d["res_type"]
 	world.res_amount = d["res_amount"]
 	world.fish = d["fish"]

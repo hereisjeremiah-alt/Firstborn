@@ -6,6 +6,8 @@ extends RefCounted
 var w := 0
 var h := 0
 var seed_value := 0
+var earth := false          # the Earth game mode (EarthGen)
+var gen_size := 0           # the world size it was generated from
 var terrain := PackedByteArray()       # Defs.T
 var elevation := PackedFloat32Array()
 var moisture := PackedFloat32Array()
