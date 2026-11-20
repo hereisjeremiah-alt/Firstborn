@@ -52,11 +52,40 @@ var _args: PackedStringArray
 
 func _ready() -> void:
 	_args = OS.get_cmdline_user_args()
+	if _args.has("--prereqcheck"):
+		# every tech's prerequisite must come from the same or an earlier age
+		var bad := 0
+		for id in Defs.TECH_ORDER:
+			var pq := Defs.tech_prereq(id)
+			if pq != "" and int(Defs.TECHS[pq]["era"]) > int(Defs.TECHS[id]["era"]):
+				print("BAD ", id, " <- ", pq)
+				bad += 1
+			print("PRQ %s (age %d, %s) needs %s" % [id, int(Defs.TECHS[id]["era"]), Defs.TECHS[id]["kind"], pq])
+		print("PRQ bad=", bad)
+		# research every age in turn, only ever picking techs whose prerequisite is done
+		var done := {}
+		for era in 4:
+			var progress := true
+			while progress:
+				progress = false
+				for id in Defs.TECH_ORDER:
+					if done.has(id) or int(Defs.TECHS[id]["era"]) != era:
+						continue
+					var pq2 := Defs.tech_prereq(id)
+					if pq2 == "" or done.has(pq2):
+						done[id] = true
+						progress = true
+			var left: Array = Defs.TECH_ORDER.filter(func(t): return int(Defs.TECHS[t]["era"]) == era and not done.has(t))
+			print("PRQ age %d: stuck techs %s" % [era, left])
+		get_tree().quit()
+		return
 	for a in _args:
 		if a.begins_with("--seed="):
 			Config.seed_value = int(a.substr(7))
 		if a == "--earth":
 			Config.earth_mode = true
+		if a.begins_with("--worldsize="):
+			Config.world_size = int(a.substr(12))
 	var loading_layer := CanvasLayer.new()
 	add_child(loading_layer)
 	var lbl := Label.new()

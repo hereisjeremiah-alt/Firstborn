@@ -483,3 +483,10 @@ Tuning lives almost entirely in `scripts/world/defs.gd`. That includes day lengt
 - **Easy Birth** (Game Rules + a switch on the new-world page, on by default): every woman has at least 2 children before 45 (1 once her tribe has over 100 people). Hunger, season and empty stores don't stop it. It waits while the tribe lacks housing. Women still owed a child are paired first.
 - **Spectate**: when your tribe perishes you can keep watching the world (no orders, building or selecting) or go to the main menu.
 - **Earth map**: a new map choice with today's continents, seas, big lakes, mountain ranges, deserts, rainforests and 38 great rivers, from 80°N to 56°S. Made by `tools/make_earth.py` into `data/earth.png` / `data/earth.json`.
+
+## Round I fixes
+
+- **Research**: a tech's prerequisite is now always the one before it in the same row, going through the ages in order. Before, some Caveman techs wrongly needed Iron Age ones, so the age couldn't be finished. `--prereqcheck` verifies every age can be completed.
+- **Earth sizes**: Normal (625×236), Large (834×315), Big (1041×394, the default for Earth) and Huge (1302×492).
+- **Maps keep their shape**: the World Map and minimap draw the Earth wide instead of squeezing it into a square.
+- **Message feed**: no dark box behind the messages on the left; the text keeps a dark outline.

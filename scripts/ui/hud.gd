@@ -656,9 +656,8 @@ func _build_feed() -> void:
 	feed_box.offset_bottom = -232
 	feed_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	feed_box.clip_contents = true
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.08, 0.07, 0.05, 0.55)
-	sb.set_corner_radius_all(6)
+	# no background box: the messages float over the map with a dark outline so they stay readable
+	var sb := StyleBoxEmpty.new()
 	sb.set_content_margin_all(6)
 	feed_box.add_theme_stylebox_override("panel", sb)
 	root.add_child(feed_box)
@@ -2140,25 +2139,31 @@ func _refresh_info() -> void:
 func _build_minimap() -> void:
 	var holder := PanelContainer.new()
 	holder.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	var aspect := float(game.sim.world.w) / float(game.sim.world.h)
+	var mm := Vector2(200, 200) if aspect < 1.2 else Vector2(300, roundf(300.0 / aspect))
 	holder.offset_left = 8
 	holder.offset_bottom = -8
-	holder.offset_top = -224
-	holder.offset_right = 224
+	holder.offset_top = -(mm.y + 24.0)
+	holder.offset_right = mm.x + 24.0
 	root.add_child(holder)
 	minimap = MapView.new()
 	minimap.game = game
-	minimap.custom_minimum_size = Vector2(200, 200)
+	minimap.custom_minimum_size = mm
 	holder.add_child(minimap)
 
 
 func _build_worldmap() -> void:
 	worldmap_panel = PanelContainer.new()
 	worldmap_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	worldmap_panel.custom_minimum_size = Vector2(700, 730)
-	worldmap_panel.offset_left = -350
-	worldmap_panel.offset_top = -365
-	worldmap_panel.offset_right = 350
-	worldmap_panel.offset_bottom = 365
+	# the Earth map is much wider than tall: give it a wide window
+	var aspect := float(game.sim.world.w) / float(game.sim.world.h)
+	var msz := Vector2(680, 680) if aspect < 1.2 else Vector2(1360, roundf(1360.0 / aspect))
+	var psz := msz + Vector2(20, 50)
+	worldmap_panel.custom_minimum_size = psz
+	worldmap_panel.offset_left = -psz.x * 0.5
+	worldmap_panel.offset_top = -psz.y * 0.5
+	worldmap_panel.offset_right = psz.x * 0.5
+	worldmap_panel.offset_bottom = psz.y * 0.5
 	worldmap_panel.visible = false
 	root.add_child(worldmap_panel)
 	var v := VBoxContainer.new()
@@ -2180,7 +2185,7 @@ func _build_worldmap() -> void:
 	worldmap.zoomable = true
 	worldmap.tooltip_text = "Mouse wheel: zoom · right-drag: pan · left-click: go there"
 	worldmap.show_animals = true
-	worldmap.custom_minimum_size = Vector2(680, 680)
+	worldmap.custom_minimum_size = msz
 	v.add_child(worldmap)
 
 

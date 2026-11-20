@@ -240,13 +240,22 @@ func _label_at(at: Vector2, text: String, fs: int, col: Color, outline: int) -> 
 
 
 func _map_rect() -> Rect2:
-	var side := minf(size.x, size.y) - 8.0
-	var base := Rect2((size - Vector2(side, side)) * 0.5, Vector2(side, side))
+	# keep the world's own shape (the Earth map is much wider than tall)
+	var aspect := 1.0
+	if game != null and game.sim != null and game.sim.world != null and game.sim.world.h > 0:
+		aspect = float(game.sim.world.w) / float(game.sim.world.h)
+	elif map_tex != null and map_tex.get_height() > 0:
+		aspect = float(map_tex.get_width()) / float(map_tex.get_height())
+	var room := size - Vector2(8, 8)
+	var fit := Vector2(room.x, room.x / aspect)
+	if fit.y > room.y:
+		fit = Vector2(room.y * aspect, room.y)
+	var base := Rect2((size - fit) * 0.5, fit)
 	if not zoomable or map_zoom <= 1.0:
 		return base
-	var big := side * map_zoom
+	var big := fit * map_zoom
 	var mid := base.position + base.size * 0.5
-	return Rect2(mid - map_center * big, Vector2(big, big))
+	return Rect2(mid - map_center * big, big)
 
 
 func _gui_input(event: InputEvent) -> void:

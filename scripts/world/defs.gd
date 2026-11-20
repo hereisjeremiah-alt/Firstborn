@@ -691,15 +691,31 @@ static func tech_step(id: String) -> int:
 	return n
 
 
-## The tech that must be researched first: the previous one in the same category (any era).
+## The tech that must be researched first: the one just before it in the same category,
+## going through the ages in order (never a tech from a later age).
 static func tech_prereq(id: String) -> String:
 	var t: Dictionary = TECHS[id]
+	var era := int(t["era"])
+	var kind := str(t["kind"])
 	var prev := ""
-	for o in TECH_ORDER:
+	var prev_era := -1
+	var prev_pos := -1
+	var my_pos := TECH_ORDER.find(id)
+	for k in TECH_ORDER.size():
+		var o: String = TECH_ORDER[k]
 		if o == id:
-			return prev
-		if str(TECHS[o]["kind"]) == str(t["kind"]):
+			continue
+		var ot: Dictionary = TECHS[o]
+		if str(ot["kind"]) != kind:
+			continue
+		var oe := int(ot["era"])
+		# earlier in (age, list order) than this tech
+		if oe > era or (oe == era and k > my_pos):
+			continue
+		if oe > prev_era or (oe == prev_era and k > prev_pos):
 			prev = o
+			prev_era = oe
+			prev_pos = k
 	return prev
 
 

@@ -3,6 +3,8 @@ extends Control
 ## designer and loading a saved game.
 
 const SIZES := [[256, "Small (256 x 256)"], [384, "Medium (384 x 384)"], [512, "Large (512 x 512)"]]
+const EARTH_SIZES := [[384, "Earth — Normal (625 x 236)"], [512, "Earth — Large (834 x 315)"], [640, "Earth — Big (1041 x 394)"],
+	[800, "Earth — Huge (1302 x 492) · slower"]]
 
 var bg_tex: TextureRect
 var pages := {}
@@ -157,13 +159,12 @@ func _page_new() -> Control:
 	map_opt.add_item("Earth (today's continents)", 1)
 	map_opt.tooltip_text = "Earth: today's continents, seas, mountains, deserts, rainforests and great rivers, from 80°N to 56°S."
 	map_opt.select(1 if Config.earth_mode else 0)
-	map_opt.item_selected.connect(func(i): Config.earth_mode = i == 1; _on_preview())
+	map_opt.item_selected.connect(func(i): Config.earth_mode = i == 1; _fill_sizes(); _on_preview())
 	left.add_child(map_opt)
 	left.add_child(_label("World size", 15))
 	size_opt = OptionButton.new()
-	for i in SIZES.size():
-		size_opt.add_item(SIZES[i][1], i)
-	size_opt.select(1)
+	size_opt.tooltip_text = "Bigger worlds hold more land and take longer to make. Earth can be made really big."
+	_fill_sizes()
 	left.add_child(size_opt)
 
 	var trow := HBoxContainer.new()
@@ -253,8 +254,23 @@ func _current_seed() -> int:
 	return Config.seed_from_text(seed_edit.text)
 
 
+func _size_list() -> Array:
+	return EARTH_SIZES if Config.earth_mode else SIZES
+
+
+## The world-size choices: Earth has its own (wide) sizes, up to a really big planet.
+func _fill_sizes() -> void:
+	if size_opt == null:
+		return
+	size_opt.clear()
+	var ls := _size_list()
+	for i in ls.size():
+		size_opt.add_item(ls[i][1], i)
+	size_opt.select(2 if Config.earth_mode else 1)       # Earth: "Big" by default
+
+
 func _current_size() -> int:
-	return int(SIZES[size_opt.selected][0])
+	return int(_size_list()[maxi(0, size_opt.selected)][0])
 
 
 func _on_random() -> void:
